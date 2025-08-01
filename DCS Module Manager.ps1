@@ -1134,198 +1134,6 @@ if ($conf -eq [System.Windows.Forms.DialogResult]::OK) {
 }
 }
 
-function Show-LiveriesUnlockConfirmation {
-    param($DCSRoot, $ExportPath, $FilesToProcess)
-
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-
-    $confirmForm = New-Object System.Windows.Forms.Form
-    $confirmForm.Text            = "Confirm Liveries Unlock"
-    $confirmForm.Size            = New-Object System.Drawing.Size(700,600)
-    $confirmForm.StartPosition   = "CenterScreen"
-    $confirmForm.FormBorderStyle = 'FixedDialog'
-    $confirmForm.MaximizeBox     = $false
-    $confirmForm.MinimizeBox     = $false
-
-    $infoLabel = New-Object System.Windows.Forms.Label
-    $infoLabel.Text     = "Files to be processed for liveries unlock:"
-    $infoLabel.Location = New-Object System.Drawing.Point(10,10)
-    $infoLabel.Size     = New-Object System.Drawing.Size(660,20)
-    $infoLabel.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
-    $confirmForm.Controls.Add($infoLabel)
-
-    $filesList = New-Object System.Windows.Forms.ListBox
-    $filesList.Location = New-Object System.Drawing.Point(10,35)
-    $filesList.Size     = New-Object System.Drawing.Size(660,300)
-    $filesList.Font     = New-Object System.Drawing.Font("Consolas",8)
-
-    $unique = $FilesToProcess | Sort-Object -Unique
-
-    if ($unique.Count -eq 0) {
-        $filesList.Items.Add("No description.lua files found to process.")
-    } else {
-        $groups = @{}
-        foreach ($f in $unique) {
-            $parts = $f.Split("\")
-            $idx = [Array]::IndexOf($parts,"Liveries")
-            if ($idx -ge 0 -and $idx+1 -lt $parts.Length) {
-                $model  = $parts[$idx+1]
-                $livery = if ($idx+2 -lt $parts.Length) { $parts[$idx+2] } else { "(root)" }
-            } else {
-                $model  = "Unknown"
-                $livery = Split-Path $f -Leaf
-            }
-            if (-not $groups.ContainsKey($model)) { $groups[$model] = @() }
-            $groups[$model] += $livery
-        }
-
-        $filesList.Items.Add("=== DESCRIPTION.LUA FILES TO UNLOCK ===")
-        $filesList.Items.Add("")
-        foreach ($model in ($groups.Keys | Sort-Object)) {
-            $count = $groups[$model].Count
-            $filesList.Items.Add("$model ($count files):")
-            foreach ($l in ($groups[$model] | Sort-Object)) {
-                $filesList.Items.Add("  - $l")
-            }
-            $filesList.Items.Add("")
-        }
-        $filesList.Items.Add("TOTAL FILES: $($unique.Count)")
-    }
-    $confirmForm.Controls.Add($filesList)
-
-    $pathLabel = New-Object System.Windows.Forms.Label
-    $pathLabel.Text     = "Paths:"
-    $pathLabel.Location = New-Object System.Drawing.Point(10,350)
-    $pathLabel.Size     = New-Object System.Drawing.Size(660,20)
-    $pathLabel.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
-    $confirmForm.Controls.Add($pathLabel)
-
-    $pathText = New-Object System.Windows.Forms.TextBox
-    $pathText.Location   = New-Object System.Drawing.Point(10,375)
-    $pathText.Size       = New-Object System.Drawing.Size(660,80)
-    $pathText.Multiline  = $true
-    $pathText.ScrollBars = "Vertical"
-    $pathText.ReadOnly   = $true
-    $pathText.Font       = New-Object System.Drawing.Font("Consolas",8)
-    $pathText.Text       = "DCS Installation: $DCSRoot`r`nExport Directory: $ExportPath"
-    $confirmForm.Controls.Add($pathText)
-
-    $panel = New-Object System.Windows.Forms.Panel
-    $panel.Height = 60
-    $panel.Dock   = "Bottom"
-    $confirmForm.Controls.Add($panel)
-
-    $btnOK = New-Object System.Windows.Forms.Button
-    $btnOK.Text     = "Unlock Liveries"
-    $btnOK.Size     = New-Object System.Drawing.Size(120,30)
-    $btnOK.Location = New-Object System.Drawing.Point(200,15)
-    $btnOK.BackColor= [System.Drawing.Color]::LightGreen
-    $btnOK.Add_Click({ $confirmForm.DialogResult = [System.Windows.Forms.DialogResult]::OK; $confirmForm.Close() })
-    $panel.Controls.Add($btnOK)
-
-    $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text     = "Cancel"
-    $btnCancel.Size     = New-Object System.Drawing.Size(80,30)
-    $btnCancel.Location = New-Object System.Drawing.Point(340,15)
-    $btnCancel.Add_Click({ $confirmForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel; $confirmForm.Close() })
-    $panel.Controls.Add($btnCancel)
-
-    $dr = $confirmForm.ShowDialog()
-    $confirmForm.Dispose()
-    return $dr
-}
-
-function UnlockLiveries {
-    param($DCSRoot)
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-    Add-Type -Assembly 'System.IO.Compression.FileSystem'
-
-    Write-Host "UnlockLiveries: Starting with DCSRoot=$DCSRoot"
-    $bazar = Join-Path $DCSRoot "Bazar"
-    $core  = Join-Path $DCSRoot "CoreMods"
-    if (-not (Test-Path $bazar) -or -not (Test-Path $core)) {
-        [System.Windows.Forms.MessageBox]::Show("Invalid installation: missing Bazar/CoreMods","Error",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Error)
-        return
-    }
-
-    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dlg.Description = "Select export directory for liveries"
-    $dlg.ShowNewFolderButton = $true
-    $dlg.SelectedPath = [Environment]::GetFolderPath("Desktop")
-    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
-    $export = $dlg.SelectedPath
-
-    # Gather files including ZIPs
-    $all = @(Get-ChildItem $bazar -Recurse -Filter description.lua)
-    $all += @(Get-ChildItem $core  -Recurse -Filter description.lua)
-    $zips = @(Get-ChildItem $bazar -Recurse -Filter *.zip)
-    $zips += @(Get-ChildItem $core  -Recurse -Filter *.zip)
-
-    $descr = New-Object System.Collections.ArrayList
-    foreach ($file in $all) {
-        if ($file.FullName -match '\\Liveries\\') { [void]$descr.Add($file.FullName) }
-    }
-    foreach ($zip in $zips) {
-        if ($zip.FullName -match '\\Liveries\\') {
-            $tmp = Join-Path $env:TEMP "LiveryTmp\$($zip.BaseName)"
-            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-            $entry = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName).Entries |
-                     Where-Object Name -ieq 'description.lua'
-            if ($entry) {
-                $out = Join-Path $tmp "description.lua"
-                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $out, $true)
-                [void]$descr.Add($out)
-            }
-        }
-    }
-    $descr = $descr | Sort-Object -Unique
-
-    if ($descr.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("No files found.","Info",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
-        return
-    }
-
-    $rAll = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
-	$r = if ($rAll -is [array]) { $rAll[0].ToString() } else { $rAll.ToString() }
-	if ($r -ne 'OK') {
-		Write-Host "User canceled or other result: $r"
-		return
-	}
-	Write-Host "User confirmed operation - proceeding..."
-
-    # Patterns
-    $regex   = '(?ms)^(\bcountries\b.*?\{).*?(\})'
-    $regCheck= '(?ms)^--\[\[.*?\]\]'
-    $regIn   = '--[[`$1`n`t`$2]]'
-
-    for ($i=0; $i -lt $descr.Count; $i++) {
-        Write-Progress -Activity "Modifying Files" -Status "$($i+1)/$($descr.Count)" -PercentComplete (100*($i+1)/$descr.Count)
-        $file = $descr[$i]
-        Write-Host "Modifying loop file: $file"
-        # Read entire file content as single string
-        $txt = (Get-Content -Path $file) -join "`n"
-        if ($txt -match $regCheck) { continue }
-        if ($txt -match $regex) {
-            $parts = $file.Split('\')
-            $idx   = [Array]::IndexOf($parts,'Liveries')
-            $model = $parts[$idx+1]
-            $livery= $parts[$idx+2]
-            $target = Join-Path $export "Liveries\$model\$livery\description.lua"
-            New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
-            $new = $txt -replace $regex, $regIn
-            # Write back without -Encoding
-            Set-Content -Path $target -Value $new
-        }
-    }
-    Write-Progress -Activity "Modifying Files" -Completed
-
-    [System.Windows.Forms.MessageBox]::Show("Unlock complete!`nExport path:`n$export","Done",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
-    Start-Process explorer.exe -ArgumentList $export
-	
-}
-
 function Get-LiveryPaths {
     param($DCSRoot)
     Add-Type -Assembly 'System.IO.Compression.FileSystem'
@@ -1361,85 +1169,243 @@ function Get-LiveryPaths {
            Select-Object -ExpandProperty FullName |
            Sort-Object -Unique
 }
-
-function UnlockLiveries {
-    param($DCSRoot)
+function Show-ModuleSelectorDialog {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 
-    Write-Host "UnlockLiveries: Starting with DCSRoot=$DCSRoot"
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "DCS Module Manager"
+    $form.Size = New-Object System.Drawing.Size(400, 500)
+    $form.StartPosition = "CenterScreen"
+
+    $checkedListBox = New-Object System.Windows.Forms.CheckedListBox
+    $checkedListBox.Location = New-Object System.Drawing.Point(10, 10)
+    $checkedListBox.Size = New-Object System.Drawing.Size(360, 370)
+    $checkedListBox.CheckOnClick = $true
+
+    $ModulesList | ForEach-Object {
+        $checkedListBox.Items.Add($_)
+    }
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = "Install Selected"
+    $okButton.Location = New-Object System.Drawing.Point(10, 390)
+    $okButton.Size = New-Object System.Drawing.Size(110, 30)
+    $okButton.Add_Click({
+        $form.Tag = "Install"
+        $form.Close()
+    })
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = "Cancel"
+    $cancelButton.Location = New-Object System.Drawing.Point(130, 390)
+    $cancelButton.Size = New-Object System.Drawing.Size(80, 30)
+    $cancelButton.Add_Click({
+        $form.Tag = "Cancel"
+        $form.Close()
+    })
+
+    $unlockButton = New-Object System.Windows.Forms.Button
+    $unlockButton.Text = "Unlock Liveries"
+    $unlockButton.Location = New-Object System.Drawing.Point(220, 390)
+    $unlockButton.Size = New-Object System.Drawing.Size(140, 30)
+    $unlockButton.Add_Click({
+        $form.Tag = "UnlockLiveries"
+        $form.Close()
+    })
+
+    $form.Controls.Add($checkedListBox)
+    $form.Controls.Add($okButton)
+    $form.Controls.Add($cancelButton)
+    $form.Controls.Add($unlockButton)
+
+    $form.ShowDialog()
+
+    return @{
+        Result = $form.Tag
+        SelectedModules = @($checkedListBox.CheckedItems)
+    }
+}
+
+function Show-LiveriesUnlockConfirmation {
+    param(
+        [string]$DCSRoot,
+        [string]$ExportPath,
+        [string[]]$FilesToProcess
+    )
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text            = "Confirm Liveries Unlock"
+    $form.Size            = New-Object System.Drawing.Size(700,600)
+    $form.StartPosition   = "CenterScreen"
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox     = $false
+    $form.MinimizeBox     = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text     = "Files to be processed for liveries unlock:"
+    $lbl.Location = New-Object System.Drawing.Point(10,10)
+    $lbl.Size     = New-Object System.Drawing.Size(660,20)
+    $lbl.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
+    $form.Controls.Add($lbl)
+
+    $filesList = New-Object System.Windows.Forms.ListBox
+    $filesList.Location = New-Object System.Drawing.Point(10,35)
+    $filesList.Size     = New-Object System.Drawing.Size(660,300)
+    $filesList.Font     = New-Object System.Drawing.Font("Consolas",8)
+    $form.Controls.Add($filesList)
+
+    if ($FilesToProcess.Count -eq 0) {
+        [void]$filesList.Items.Add("No description.lua files found to process.")
+    } else {
+        $groups = $FilesToProcess |
+            ForEach-Object {
+                $rel = $_.Substring($DCSRoot.Length+1)
+                $parts = $rel -split '[\\/]'
+                $idx = [Array]::IndexOf($parts,'Liveries')
+                $model = if ($idx -ge 0 -and $idx+1 -lt $parts.Count) { $parts[$idx+1] } else { '<unknown>' }
+                [PSCustomObject]@{ Model=$model; Path=$rel }
+            } |
+            Group-Object Model | Sort-Object Name
+        foreach ($grp in $groups) {
+            [void]$filesList.Items.Add("=== $($grp.Name) ===")
+            foreach ($item in $grp.Group) {
+                [void]$filesList.Items.Add("  $($item.Path)")
+            }
+            [void]$filesList.Items.Add("")
+        }
+    }
+
+    $pathLabel = New-Object System.Windows.Forms.Label
+    $pathLabel.Text     = "Export path: $ExportPath"
+    $pathLabel.Location = New-Object System.Drawing.Point(10,350)
+    $pathLabel.Size     = New-Object System.Drawing.Size(660,20)
+    $pathLabel.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
+    $form.Controls.Add($pathLabel)
+
+    $buttonPanel = New-Object System.Windows.Forms.Panel
+    $buttonPanel.Height = 60
+    $buttonPanel.Dock   = "Bottom"
+    $form.Controls.Add($buttonPanel)
+
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Text         = "Unlock Liveries"
+    $btnOK.Size         = New-Object System.Drawing.Size(120,30)
+    $btnOK.Location     = New-Object System.Drawing.Point(200,15)
+    $btnOK.BackColor    = [System.Drawing.Color]::LightGreen
+    $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $buttonPanel.Controls.Add($btnOK)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text         = "Cancel"
+    $btnCancel.Size         = New-Object System.Drawing.Size(80,30)
+    $btnCancel.Location     = New-Object System.Drawing.Point(340,15)
+    $btnCancel.BackColor    = [System.Drawing.Color]::LightCoral
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $buttonPanel.Controls.Add($btnCancel)
+
+    $form.AcceptButton = $btnOK
+    $form.CancelButton = $btnCancel
+
+    # KRYTYCZNA ZMIANA: Jawnie zwróć tylko DialogResult
+    $dialogResult = $form.ShowDialog()
+    $form.Dispose()
+    return $dialogResult
+}
+
+function UnlockLiveries {
+    param($DCSRoot)
+
+    Write-Host "DEBUG: Entered UnlockLiveries"
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -Assembly 'System.IO.Compression.FileSystem'
+
     $bazar = Join-Path $DCSRoot "Bazar"
     $core  = Join-Path $DCSRoot "CoreMods"
     if (-not (Test-Path $bazar) -or -not (Test-Path $core)) {
-        [System.Windows.Forms.MessageBox]::Show(
-          "Invalid installation: missing Bazar/CoreMods","Error",
-          [System.Windows.Forms.MessageBoxButtons]::OK,
-          [System.Windows.Forms.MessageBoxIcon]::Error)
+        [System.Windows.Forms.MessageBox]::Show("Invalid installation: missing Bazar/CoreMods","Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Error)
+        Write-Host "DEBUG: Missing Bazar or CoreMods, aborting"
         return
     }
 
+    Write-Host "DEBUG: Showing export folder dialog"
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dlg.Description = "Select export directory for liveries"
+    $dlg.Description         = "Select export directory for liveries"
     $dlg.ShowNewFolderButton = $true
-    $dlg.SelectedPath = [Environment]::GetFolderPath("Desktop")
-    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
-    $export = $dlg.SelectedPath
+    $default = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta\Liveries"
+    $dlg.SelectedPath        = if (Test-Path $default) { $default } else { [Environment]::GetFolderPath("Desktop") }
 
-    # Pobierz wszystkie ścieżki
-    $descr = Get-LiveryPaths -DCSRoot $DCSRoot
+    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-Host "DEBUG: Export dialog canceled"
+        return
+    }
+    $export = $dlg.SelectedPath
+    Write-Host "DEBUG: Selected export path = $export"
+
+    Write-Host "DEBUG: Collecting description.lua files"
+    $descr = @(Get-ChildItem $bazar  -Recurse -Filter description.lua -ErrorAction SilentlyContinue |
+               Where-Object FullName -match '\\Liveries\\' |
+               Select-Object -ExpandProperty FullName) +
+             @(Get-ChildItem $core   -Recurse -Filter description.lua -ErrorAction SilentlyContinue |
+               Where-Object FullName -match '\\Liveries\\' |
+               Select-Object -ExpandProperty FullName)
+    $descr = $descr | Sort-Object -Unique
+    Write-Host "DEBUG: Found $($descr.Count) description.lua files"
+
     if ($descr.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show(
-          "No description.lua files found under any Liveries folder.","Info",
-          [System.Windows.Forms.MessageBoxButtons]::OK,
-          [System.Windows.Forms.MessageBoxIcon]::Information)
+        Write-Host "DEBUG: No files to process, exiting"
         return
     }
 
-    $r = Show-LiveriesUnlockConfirmation `
-         -DCSRoot $DCSRoot `
-         -ExportPath $export `
-         -FilesToProcess $descr
-    if ([int]$r -ne [int][System.Windows.Forms.DialogResult]::OK) { return }
+    Write-Host "DEBUG: Showing confirmation dialog"
+    $result = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
+    Write-Host "DEBUG: DialogResult = $result"
 
-    # Wzorce
-    $regex   = '(?ms)^(\bcountries\b.*?\{).*?(\})'
-    $regCheck= '(?ms)^--\[\[.*?\]\]'
-    $regIn   = '--[[`$1`n`t`$2]]'
-
-    # W pętli modyfikacji plików:
-for ($i = 0; $i -lt $descr.Count; $i++) {
-    Write-Progress -Activity "Modifying Files" -Status "$($i+1)/$($descr.Count)" -PercentComplete (100*($i+1)/$descr.Count)
-    $file = $descr[$i]
-    Write-Host "Modifying loop file: $file"
-    try {
-        $lines = Get-Content -LiteralPath $file -ErrorAction Stop
-        $txt   = $lines -join "`n"
-    } catch {
-        Write-Host "Skipping unreadable file: $file"
-        continue
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-Host "DEBUG: User cancelled unlock"
+        return
     }
-    if ($txt -match $regCheck) { continue }
-    if ($txt -match $regex) {
-        $parts  = $file.Split('\')
-        $idx    = [Array]::IndexOf($parts,'Liveries')
-        $model  = $parts[$idx+1]
-        $livery = $parts[$idx+2]
-        $target = Join-Path $export "Liveries\$model\$livery\description.lua"
-        New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
-        $new = $txt -replace $regex, $regIn
-        Set-Content -LiteralPath $target -Value $new
+
+    Write-Host "DEBUG: Starting to modify files"
+    $regex    = '(?ms)^(\bcountries\b.*?\{).*?(\})'
+    $regCheck = '(?ms)^--\[\[.*?\]\]'
+    $regIn    = '--[[$1`n`t$2]]'
+
+    for ($i = 0; $i -lt $descr.Count; $i++) {
+        $file = $descr[$i]
+        Write-Host "DEBUG: Processing file $($i+1)/$($descr.Count): $file"
+        try {
+            $txt = Get-Content -Raw $file -ErrorAction Stop
+        } catch {
+            Write-Host "DEBUG: Failed to read $file"
+            continue
+        }
+        if ($txt -match $regCheck) {
+            Write-Host "DEBUG: Already unlocked, skipping $file"
+            continue
+        }
+        if ($txt -match $regex) {
+            $parts  = $file.Split('\')
+            $idx    = [Array]::IndexOf($parts,'Liveries')
+            $model  = $parts[$idx+1]
+            $livery = $parts[$idx+2]
+            $target = Join-Path $export "Liveries\$model\$livery\description.lua"
+            Write-Host "DEBUG: Unlocking $model/$livery to $target"
+            New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
+            ($txt -replace $regex, $regIn) | Set-Content -LiteralPath $target
+        } else {
+            Write-Host "DEBUG: No countries block in $file"
+        }
     }
+
+    Write-Host "DEBUG: UnlockLiveries completed"
 }
-Write-Progress -Activity "Modifying Files" -Completed
-
-    [System.Windows.Forms.MessageBox]::Show(
-      "Unlock complete!`nExport path:`n$export","Done",
-      [System.Windows.Forms.MessageBoxButtons]::OK,
-      [System.Windows.Forms.MessageBoxIcon]::Information)
-
-    Start-Process explorer.exe -ArgumentList $export
-}
-
 function Create-OtherTab {
     param($TabControl, $DCSRoot)
     
