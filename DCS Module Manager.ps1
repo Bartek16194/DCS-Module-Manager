@@ -1340,7 +1340,6 @@ function UnlockLiveries {
     $dlg.ShowNewFolderButton = $true
     $default = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta\Liveries"
     $dlg.SelectedPath        = if (Test-Path $default) { $default } else { [Environment]::GetFolderPath("Desktop") }
-
     if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
         Write-Host "DEBUG: Export dialog canceled"
         return
@@ -1363,14 +1362,39 @@ function UnlockLiveries {
         return
     }
 
-    Write-Host "DEBUG: Showing confirmation dialog"
-    $result = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
-    Write-Host "DEBUG: DialogResult = $result"
-
-    if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+    # Confirmation dialog
+    $confirm = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::OK) {
         Write-Host "DEBUG: User cancelled unlock"
         return
     }
+
+    # Create progress form
+    $progressForm = New-Object System.Windows.Forms.Form
+    $progressForm.Text = "Unlocking Liveries"
+    $progressForm.Size = New-Object System.Drawing.Size(500,120)
+    $progressForm.StartPosition = "CenterScreen"
+    $progressForm.FormBorderStyle = 'FixedDialog'
+    $progressForm.MaximizeBox = $false
+    $progressForm.MinimizeBox = $false
+
+    $progressBar = New-Object System.Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object System.Drawing.Point(20,20)
+    $progressBar.Size = New-Object System.Drawing.Size(440,25)
+    $progressBar.Minimum = 0
+    $progressBar.Maximum = $descr.Count
+    $progressBar.Value = 0
+    $progressForm.Controls.Add($progressBar)
+
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Location = New-Object System.Drawing.Point(20,55)
+    $statusLabel.Size = New-Object System.Drawing.Size(440,20)
+    $statusLabel.Text = "Processing 0 of $($descr.Count)..."
+    $progressForm.Controls.Add($statusLabel)
+
+    $progressForm.Topmost = $true
+    $progressForm.Show()
+    $progressForm.Refresh()
 
     Write-Host "DEBUG: Starting to modify files"
     $regex    = '(?ms)^(\bcountries\b.*?\{).*?(\})'
@@ -1379,7 +1403,6 @@ function UnlockLiveries {
 
     for ($i = 0; $i -lt $descr.Count; $i++) {
         $file = $descr[$i]
-        Write-Host "DEBUG: Processing file $($i+1)/$($descr.Count): $file"
         try {
             $txt = Get-Content -Raw $file -ErrorAction Stop
         } catch {
@@ -1388,22 +1411,26 @@ function UnlockLiveries {
         }
         if ($txt -match $regCheck) {
             Write-Host "DEBUG: Already unlocked, skipping $file"
-            continue
         }
-        if ($txt -match $regex) {
+        elseif ($txt -match $regex) {
             $parts  = $file.Split('\')
             $idx    = [Array]::IndexOf($parts,'Liveries')
             $model  = $parts[$idx+1]
             $livery = $parts[$idx+2]
             $target = Join-Path $export "Liveries\$model\$livery\description.lua"
-            Write-Host "DEBUG: Unlocking $model/$livery to $target"
             New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
             ($txt -replace $regex, $regIn) | Set-Content -LiteralPath $target
+            Write-Host "DEBUG: Unlocking $model/$livery to $target"
         } else {
             Write-Host "DEBUG: No countries block in $file"
         }
+        # Update progress bar
+        $progressBar.Value = $i + 1
+        $statusLabel.Text = "Processing $($i + 1) of $($descr.Count)..."
+        $progressForm.Refresh()
     }
 
+    $progressForm.Close()
     Write-Host "DEBUG: UnlockLiveries completed"
 }
 function Create-OtherTab {
