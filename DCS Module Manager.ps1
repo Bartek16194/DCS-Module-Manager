@@ -1134,6 +1134,199 @@ if ($conf -eq [System.Windows.Forms.DialogResult]::OK) {
 }
 }
 
+function Show-LiveriesUnlockConfirmation {
+    param($DCSRoot, $ExportPath, $FilesToProcess)
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $confirmForm = New-Object System.Windows.Forms.Form
+    $confirmForm.Text = "Confirm Liveries Unlock"
+    $confirmForm.Size = New-Object System.Drawing.Size(700, 600)
+    $confirmForm.StartPosition = "CenterScreen"
+    $confirmForm.FormBorderStyle = 'FixedDialog'
+    $confirmForm.MaximizeBox = $false
+    $confirmForm.MinimizeBox = $false
+
+    $infoLabel = New-Object System.Windows.Forms.Label
+    $infoLabel.Text     = "Files to be processed for liveries unlock:"
+    $infoLabel.Location = New-Object System.Drawing.Point(10,10)
+    $infoLabel.Size     = New-Object System.Drawing.Size(660,20)
+    $infoLabel.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
+    $confirmForm.Controls.Add($infoLabel)
+
+    $filesList = New-Object System.Windows.Forms.ListBox
+    $filesList.Location = New-Object System.Drawing.Point(10,35)
+    $filesList.Size     = New-Object System.Drawing.Size(660,300)
+    $filesList.Font     = New-Object System.Drawing.Font("Consolas",8)
+
+    # Deduplicate
+    $unique = $FilesToProcess | Sort-Object -Unique
+
+    if ($unique.Count -eq 0) {
+        $filesList.Items.Add("No description.lua files found to process.")
+    } else {
+        # Group by model
+        $groups = @{}
+        foreach ($f in $unique) {
+            $parts = $f.Split("\")
+            $idx = [Array]::IndexOf($parts,"Liveries")
+            if ($idx -ge 0 -and $idx+1 -lt $parts.Length) {
+                $model = $parts[$idx+1]
+                $livery= if ($idx+2 -lt $parts.Length) { $parts[$idx+2] } else { "(root)" }
+            } else {
+                $model = "Unknown"; $livery = Split-Path $f -Leaf
+            }
+            if (-not $groups.ContainsKey($model)) { $groups[$model] = @() }
+            $groups[$model] += $livery
+        }
+
+        $filesList.Items.Add("=== DESCRIPTION.LUA FILES TO UNLOCK ===")
+        $filesList.Items.Add("")
+        foreach ($model in ($groups.Keys | Sort-Object)) {
+            $count = $groups[$model].Count
+            $filesList.Items.Add("$model ($count files):")
+            foreach ($l in ($groups[$model] | Sort-Object)) {
+                $filesList.Items.Add("  - $l")
+            }
+            $filesList.Items.Add("")
+        }
+        $filesList.Items.Add("TOTAL FILES: $($unique.Count)")
+    }
+    $confirmForm.Controls.Add($filesList)
+
+    $pathLabel = New-Object System.Windows.Forms.Label
+    $pathLabel.Text     = "Paths:"
+    $pathLabel.Location = New-Object System.Drawing.Point(10,350)
+    $pathLabel.Size     = New-Object System.Drawing.Size(660,20)
+    $pathLabel.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
+    $confirmForm.Controls.Add($pathLabel)
+
+    $pathText = New-Object System.Windows.Forms.TextBox
+    $pathText.Location = New-Object System.Drawing.Point(10,375)
+    $pathText.Size     = New-Object System.Drawing.Size(660,80)
+    $pathText.Multiline = $true
+    $pathText.ScrollBars = "Vertical"
+    $pathText.ReadOnly = $true
+    $pathText.Font     = New-Object System.Drawing.Font("Consolas",8)
+    $pathText.Text     = "DCS Installation: $DCSRoot`r`nExport Directory: $ExportPath"
+    $confirmForm.Controls.Add($pathText)
+
+    $panel = New-Object System.Windows.Forms.Panel
+    $panel.Height = 60; $panel.Dock = "Bottom"
+    $confirmForm.Controls.Add($panel)
+
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Text     = "Unlock Liveries"
+    $btnOK.Size     = New-Object System.Drawing.Size(120,30)
+    $btnOK.Location = New-Object System.Drawing.Point(200,15)
+    $btnOK.BackColor= [System.Drawing.Color]::LightGreen
+    $btnOK.Add_Click({ $confirmForm.DialogResult = [System.Windows.Forms.DialogResult]::OK; $confirmForm.Close() })
+    $panel.Controls.Add($btnOK)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text     = "Cancel"
+    $btnCancel.Size     = New-Object System.Drawing.Size(80,30)
+    $btnCancel.Location = New-Object System.Drawing.Point(340,15)
+    $btnCancel.Add_Click({ $confirmForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel; $confirmForm.Close() })
+    $panel.Controls.Add($btnCancel)
+
+    $dr = $confirmForm.ShowDialog()
+    $confirmForm.Dispose()
+    return $dr
+}
+
+function UnlockLiveries {
+    param($DCSRoot)
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -Assembly 'System.IO.Compression.FileSystem'
+
+    Write-Host "UnlockLiveries: Starting with DCSRoot=$DCSRoot"
+    $bazar = Join-Path $DCSRoot "Bazar"
+    $core  = Join-Path $DCSRoot "CoreMods"
+    if (-not (Test-Path $bazar) -or -not (Test-Path $core)) {
+        [System.Windows.Forms.MessageBox]::Show("Invalid installation: missing Bazar/CoreMods","Error",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Error)
+        return
+    }
+
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = "Select export directory for liveries"
+    $dlg.ShowNewFolderButton = $true
+    $dlg.SelectedPath = [Environment]::GetFolderPath("Desktop")
+    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $export = $dlg.SelectedPath
+
+    # Gather files
+    $all  = @(Get-ChildItem $bazar -Recurse -Filter description.lua)
+    $all += @(Get-ChildItem $core  -Recurse -Filter description.lua)
+    $zips = @(Get-ChildItem $bazar -Recurse -Filter *.zip)
+    $zips += @(Get-ChildItem $core  -Recurse -Filter *.zip)
+    $mods = @('A-10A','A-10C','A-10CII','AH-64D_BLK_II','AJS37','AV8BNA','BF-109K-4','C-101CC','C-101EB',
+              'Christen Eagle II','F-15C','F-15ESE','F-16C_50','F-4E-45MC','F-5E-3','F-5E','f-86f sabre',
+              'F-14A-135-GR','f14b','FA-18C_hornet','FA-18C','FW-190A8','FW-190D9','Hawk','I-16','J-11A',
+              'JF-17','ka-50','Ka-50_3','L-39C','L-39ZA','M-2000C','MB-339A','MB-339APAN','Mi-24P','Mi-8mt',
+              'MiG-15bis','MiG-19P','MiG-21Bis','mig-29a','mig-29g','mig-29s','Mirage-F1BE','Mirage-F1CE',
+              'Mirage-F1EE','MosquitoFBMkVI','OH58D','P-47D-30','P-51D','SA342L','SA342M','SA342Minigun',
+              'SpitfireLFMkIX','SpitfireLFMkIXCW','su-25','su-25t','su-27','su-33','uh-1h','YAK-52')
+
+    $descr = New-Object System.Collections.ArrayList
+    for ($i=0; $i -lt $mods.Count; $i++) {
+        Write-Progress -Activity "Filtering Modules" -Status $mods[$i] -PercentComplete (($i+1)/$mods.Count*100)
+        $found = $all | Where-Object { ($_.FullName -split '\\')[-3] -ieq $mods[$i] }
+        foreach ($f in $found) { [void]$descr.Add($f.FullName) }
+        $mzips = $zips | Where-Object { $_.FullName -match "\\$($mods[$i])\\" }
+        foreach ($zip in $mzips) {
+            $tmp = Join-Path $env:TEMP "Tmp\$($zip.BaseName)"
+            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+            $out = Join-Path $tmp "description.lua"
+            [System.IO.Compression.ZipFile]::Open($zip.FullName,'Read').Entries |
+              Where-Object Name -eq 'description.lua' |
+              ForEach-Object {[System.IO.Compression.ZipFileExtensions]::ExtractToFile($_,$out,$true)}
+            [void]$descr.Add($out)
+        }
+    }
+    Write-Progress -Activity "Filtering Modules" -Completed
+    $descr = $descr | Sort-Object -Unique
+
+    if ($descr.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("No files found.","Info",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
+        return
+    }
+
+    $r = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
+    # Compare numeric values
+    if ([int]$r -ne [int][System.Windows.Forms.DialogResult]::OK) { return }
+    Write-Host "User confirmed operation - proceeding..."
+
+    # Patterns
+    $regex   = '(?ms)^(\bcountries\b.*?\{).*?(\})'
+    $regCheck= '(?ms)^--\[\[.*?\]\]'
+    $regIn   = '--[[`$1`n`t`$2]]'
+
+    for ($i=0; $i -lt $descr.Count; $i++) {
+        Write-Progress -Activity "Modifying Files" -Status "$($i+1)/$($descr.Count)" -PercentComplete (($i+1)/$descr.Count*100)
+        $file = $descr[$i]
+        Write-Host "Modifying loop file: $file"
+        $txt = Get-Content -Path $file -Raw
+        if ($txt -match $regCheck) { continue }
+        if ($txt -match $regex) {
+            $p   = $file.Split('\')
+            $idx = [Array]::IndexOf($p,'Liveries')
+            $model  = $p[$idx+1]
+            $livery = $p[$idx+2]
+            $target = Join-Path $export "Liveries\$model\$livery\description.lua"
+            New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
+            $new = $txt -replace $regex, $regIn
+            Set-Content -Path $target -Value $new -Encoding UTF8
+        }
+    }
+    Write-Progress -Activity "Modifying Files" -Completed
+
+    [System.Windows.Forms.MessageBox]::Show("Unlock complete!`nExport path:`n$export","Done",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
+    Start-Process explorer.exe -ArgumentList $export
+}
+
 function Create-OtherTab {
     param($TabControl, $DCSRoot)
     
@@ -1156,12 +1349,10 @@ function Create-OtherTab {
     $backupButton.BackColor = [System.Drawing.Color]::LightGreen
     $mainPanel.Controls.Add($backupButton)
     
-    # Event handler dla przycisku backup
     $backupButton.Add_Click({
         BackupInputFiles
     })
     
-    # Label z opisem backup
     $descLabel1 = New-Object System.Windows.Forms.Label
     $descLabel1.Text = "Backup your DCS Input configuration files to a safe location."
     $descLabel1.Location = New-Object System.Drawing.Point(20, 70)
@@ -1177,12 +1368,10 @@ function Create-OtherTab {
     $shadersButton.BackColor = [System.Drawing.Color]::LightCoral
     $mainPanel.Controls.Add($shadersButton)
     
-    # Event handler dla przycisku shaders
     $shadersButton.Add_Click({
         ClearShaders -DCSRoot $DCSRoot
     })
     
-    # Label z opisem shaders
     $descLabel2 = New-Object System.Windows.Forms.Label
     $descLabel2.Text = "Clear shader cache (.meta2 and .fxo files) to improve performance."
     $descLabel2.Location = New-Object System.Drawing.Point(20, 160)
@@ -1198,18 +1387,35 @@ function Create-OtherTab {
     $switchUserButton.BackColor = [System.Drawing.Color]::LightBlue
     $mainPanel.Controls.Add($switchUserButton)
     
-    # Event handler dla przycisku switch user
     $switchUserButton.Add_Click({
         SwitchUser -DCSRoot $DCSRoot
     })
     
-    # Label z opisem switch user
     $descLabel3 = New-Object System.Windows.Forms.Label
     $descLabel3.Text = "Create a new DCS profile that shares settings and inputs but uses separate Eagle Dynamics account.`nUseful for multiple accounts or testing different configurations."
     $descLabel3.Location = New-Object System.Drawing.Point(20, 250)
     $descLabel3.Size = New-Object System.Drawing.Size(500, 40)
     $descLabel3.ForeColor = [System.Drawing.Color]::Gray
     $mainPanel.Controls.Add($descLabel3)
+    
+    # Przycisk Unlock Liveries
+    $liveriesButton = New-Object System.Windows.Forms.Button
+    $liveriesButton.Text = "Unlock Liveries"
+    $liveriesButton.Size = New-Object System.Drawing.Size(150, 40)
+    $liveriesButton.Location = New-Object System.Drawing.Point(20, 310)
+    $liveriesButton.BackColor = [System.Drawing.Color]::LightYellow
+    $mainPanel.Controls.Add($liveriesButton)
+    
+    $liveriesButton.Add_Click({
+        UnlockLiveries -DCSRoot $DCSRoot
+    })
+    
+    $descLabel4 = New-Object System.Windows.Forms.Label
+    $descLabel4.Text = "Modify description.lua files to unlock liveries for all countries.`nExports modified files without changing original DCS installation."
+    $descLabel4.Location = New-Object System.Drawing.Point(20, 360)
+    $descLabel4.Size = New-Object System.Drawing.Size(500, 40)
+    $descLabel4.ForeColor = [System.Drawing.Color]::Gray
+    $mainPanel.Controls.Add($descLabel4)
 }
 
 # --- Main script ---
