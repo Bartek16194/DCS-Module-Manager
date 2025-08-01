@@ -57,6 +57,59 @@ function Show-FolderBrowser {
     }
 }
 
+function BackupInputFiles {
+    # Zapytaj o folder źródłowy (Input)
+    $sourceDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $sourceDialog.Description = "Select Input Config Folder"
+    $sourceDialog.ShowNewFolderButton = $false
+    
+    # Domyślna ścieżka do Input
+    $defaultInputPath = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta\Config\Input"
+    if (Test-Path $defaultInputPath) {
+        $sourceDialog.SelectedPath = $defaultInputPath
+    }
+    
+    if ($sourceDialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        [System.Windows.Forms.MessageBox]::Show("Source folder selection canceled.", "Backup Aborted", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        return
+    }
+    $sourcePath = $sourceDialog.SelectedPath
+    
+    # Zapytaj o folder docelowy
+    $destDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $destDialog.Description = "Select Backup Destination Folder"
+    $destDialog.ShowNewFolderButton = $true
+    
+    # Domyślna ścieżka - Desktop
+    $desktopPath = [Environment]::GetFolderPath("Desktop")
+    $destDialog.SelectedPath = $desktopPath
+    
+    if ($destDialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        [System.Windows.Forms.MessageBox]::Show("Destination folder selection canceled.", "Backup Aborted", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        return
+    }
+    $destBasePath = $destDialog.SelectedPath
+    
+    # Utwórz nazwę folderu z timestamp
+    $timestamp = Get-Date -Format "yyyy-MM-dd - HH;mm;ss"
+    $folderName = "backup input $timestamp"
+    $backupFolder = Join-Path $destBasePath $folderName
+    
+    try {
+        # Utwórz folder backup
+        New-Item -Path $backupFolder -ItemType Directory -Force | Out-Null
+        
+        # Skopiuj wszystkie pliki rekursywnie
+        $sourceFiles = Join-Path $sourcePath "*"
+        Copy-Item -Path $sourceFiles -Destination $backupFolder -Recurse -Force
+        
+        [System.Windows.Forms.MessageBox]::Show("Backup completed successfully!`n`nBackup location:`n$backupFolder", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+    }
+    catch {
+        [System.Windows.Forms.MessageBox]::Show("Backup failed:`n$($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    }
+}
+
 function Show-InstallationResult {
     param($DCSRoot, $ExpectedModules, $ActualModules, $Operation)
     
@@ -348,9 +401,9 @@ $AllModules = @(
     @{Key="F-15C";                   Name="F-15C Eagle";            Category="Aircraft"; Developer="Eagle Dynamics"}
     @{Key="F-16C";                   Name="F-16C Viper";            Category="Aircraft"; Developer="Eagle Dynamics"}
     @{Key="FA-18C";                  Name="F/A-18C Hornet";         Category="Aircraft"; Developer="Eagle Dynamics"}
-    @{Key="F-5E";                    Name="F-5E Tiger II (Legacy)";          						Category="Aircraft"; Developer="Eagle Dynamics"}
-    @{Key="F-5E_2024";               Name="F-5E Tiger II Remaster (2024)";   				Category="Aircraft"; Developer="Eagle Dynamics"}
-    @{Key="FC3";               		Name="Flaming Cliffs 3";   				Category="Aircraft"; Developer="Eagle Dynamics"}
+    @{Key="F-5E";                    Name="F-5E Tiger II (Legacy)";          Category="Aircraft"; Developer="Eagle Dynamics"}
+    @{Key="F-5E_2024";               Name="F-5E Tiger II Remaster (2024)";   Category="Aircraft"; Developer="Eagle Dynamics"}
+    @{Key="FC3";               Name="Flaming Cliffs 3";   Category="Aircraft"; Developer="Eagle Dynamics"}
     @{Key="FW-190A8";                Name="Fw-190A8 Anton";         Category="Aircraft"; Developer="Eagle Dynamics"}
     @{Key="FW-190D9";                Name="Fw-190D9 Dora";          Category="Aircraft"; Developer="Eagle Dynamics"}
     @{Key="KA-50";                   Name="Ka-50 Black Shark II";   Category="Aircraft"; Developer="Eagle Dynamics"}
@@ -370,12 +423,12 @@ $AllModules = @(
     @{Key="YAK-52";                  Name="Yak-52";                 Category="Aircraft"; Developer="Eagle Dynamics"}
     @{Key="F-86F";                   Name="F-86F Sabre";            Category="Aircraft"; Developer="Eagle Dynamics"}
     @{Key="MIG-15BIS";               Name="MiG-15bis Fagot";        Category="Aircraft"; Developer="Eagle Dynamics"}
-	
-	#FC2024 / 3
-    @{Key="F-5E_FC";                 Name="F-5E Tiger II (Flaming Cliffs 2024)";         	Category="Aircraft"; Developer="Eagle Dynamics"}
-    @{Key="F-86F_FC";            	 Name="F-86F Sabre (Flaming Cliffs 2024)";         	Category="Aircraft"; Developer="Eagle Dynamics"}
-    @{Key="MIG-15BIS_FC";            Name="MIG-15Bis Fagot (Flaming Cliffs 2024)";         	Category="Aircraft"; Developer="Eagle Dynamics"}
-	
+
+#FC2024 / 3
+    @{Key="F-5E_FC";                 Name="F-5E Tiger II (Flaming Cliffs 2024)";         Category="Aircraft"; Developer="Eagle Dynamics"}
+    @{Key="F-86F_FC";             Name="F-86F Sabre (Flaming Cliffs 2024)";         Category="Aircraft"; Developer="Eagle Dynamics"}
+    @{Key="MIG-15BIS_FC";            Name="MIG-15Bis Fagot (Flaming Cliffs 2024)";         Category="Aircraft"; Developer="Eagle Dynamics"}
+
     # Aircraft Modules - Third Party
     @{Key="AERGES_MIRAGE-F1";        Name="Mirage F1";              Category="Aircraft"; Developer="Aerges"}
     @{Key="AVIODEV_C-101";           Name="C-101 Aviojet";          Category="Aircraft"; Developer="AvioDev"}
@@ -389,7 +442,7 @@ $AllModules = @(
     @{Key="MIG-21BIS";               Name="MiG-21bis Fishbed";      Category="Aircraft"; Developer="Magnitude 3"}
     @{Key="OCTOPUSG_I-16";           Name="I-16 Ishachok";          Category="Aircraft"; Developer="OctopusG"}
     @{Key="POLYCHOPSIM_SA342";       Name="SA342 Gazelle";          Category="Aircraft"; Developer="Polychop"}
-    @{Key="POLYCHOPSIM_OH58D";        Name="OH-58D Kiowa Warrior";	Category="Aircraft"; Developer="Polychop"}
+    @{Key="POLYCHOPSIM_OH58D";        Name="OH-58D Kiowa Warrior";Category="Aircraft"; Developer="Polychop"}
     @{Key="RAZBAM_AV8BNA";           Name="AV-8B N.A. Harrier";     Category="Aircraft"; Developer="Razbam"}
     @{Key="RAZBAM_F-15E";            Name="F-15E Strike Eagle";     Category="Aircraft"; Developer="Razbam"}
     @{Key="RAZBAM_M-2000C";          Name="Mirage 2000C";           Category="Aircraft"; Developer="Razbam"}
@@ -534,27 +587,6 @@ function Create-ModuleTab {
         $localInstalledModules = $data.InstalledModules
         $localCheckboxes = $data.Checkboxes
         
-        # Debug info
-        $totalCheckboxes = $localCheckboxes.Count
-        $checkedBoxes = @($localCheckboxes | Where-Object { $_.Checked })
-        $enabledBoxes = @($localCheckboxes | Where-Object { $_.Enabled })
-        
-        Write-Host "=== DEBUG INFO ==="
-        Write-Host "Operation: $localOperation"
-        Write-Host "Total checkboxes: $totalCheckboxes"
-        Write-Host "Checked boxes: $($checkedBoxes.Count)"
-        Write-Host "Enabled boxes: $($enabledBoxes.Count)"
-        Write-Host "Installed modules count: $($localInstalledModules.Count)"
-        
-        # Wypisz pierwsze kilka checkboxów dla debugowania
-        if ($totalCheckboxes -gt 0) {
-            Write-Host "First 3 checkboxes:"
-            for ($i = 0; $i -lt [Math]::Min(3, $totalCheckboxes); $i++) {
-                $cb = $localCheckboxes[$i]
-                Write-Host "  $($cb.Text): Checked=$($cb.Checked), Enabled=$($cb.Enabled), Tag=$($cb.Tag)"
-            }
-        }
-        
         # Logika sprawdzania
         $selectedCheckboxes = @()
         
@@ -566,21 +598,16 @@ function Create-ModuleTab {
             $selectedCheckboxes = @($localCheckboxes | Where-Object { $_.Checked -and $_.Enabled })
         }
         
-        Write-Host "Selected checkboxes: $($selectedCheckboxes.Count)"
-        
         if ($selectedCheckboxes.Count -eq 0) {
             $actionText = if ($localOperation -eq "install") { "installation" } else { "uninstallation" }
             $message = "No modules selected for $actionText."
-            [System.Windows.Forms.MessageBox]::Show("$message`n`nDEBUG: Operation=$localOperation, Total=$totalCheckboxes, Checked=$($checkedBoxes.Count), Enabled=$($enabledBoxes.Count)", "Info", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            [System.Windows.Forms.MessageBox]::Show($message, "Info", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
             return
         }
         
         # Pobierz klucze i nazwy
         $selectedKeys = $selectedCheckboxes | ForEach-Object { $_.Tag }
         $selectedModuleNames = $selectedCheckboxes | ForEach-Object { $_.Text }
-        
-        Write-Host "Selected keys: $($selectedKeys -join ', ')"
-        Write-Host "=================="
         
         $exePath = Join-Path $localDCSRoot "Bin\DCS_updater.exe"
         $command = if ($localOperation -eq "install") {
@@ -603,7 +630,40 @@ function Create-ModuleTab {
     })
 }
 
-
+function Create-OtherTab {
+    param($TabControl)
+    
+    # Utwórz zakładkę Other
+    $otherTab = New-Object System.Windows.Forms.TabPage
+    $otherTab.Text = "Other"
+    $TabControl.Controls.Add($otherTab)
+    
+    # Panel główny
+    $mainPanel = New-Object System.Windows.Forms.Panel
+    $mainPanel.Dock = "Fill"
+    $otherTab.Controls.Add($mainPanel)
+    
+    # Przycisk Input Backup
+    $backupButton = New-Object System.Windows.Forms.Button
+    $backupButton.Text = "Input Backup"
+    $backupButton.Size = New-Object System.Drawing.Size(150, 40)
+    $backupButton.Location = New-Object System.Drawing.Point(20, 20)
+    $backupButton.BackColor = [System.Drawing.Color]::LightGreen
+    $mainPanel.Controls.Add($backupButton)
+    
+    # Event handler dla przycisku
+    $backupButton.Add_Click({
+        BackupInputFiles
+    })
+    
+    # Label z opisem
+    $descLabel = New-Object System.Windows.Forms.Label
+    $descLabel.Text = "Backup your DCS Input configuration files to a safe location."
+    $descLabel.Location = New-Object System.Drawing.Point(20, 70)
+    $descLabel.Size = New-Object System.Drawing.Size(400, 20)
+    $descLabel.ForeColor = [System.Drawing.Color]::Gray
+    $mainPanel.Controls.Add($descLabel)
+}
 
 # --- Main script ---
 do {
@@ -639,6 +699,9 @@ do {
     # Create Install and Uninstall tabs
     Create-ModuleTab -TabControl $mainTabControl -TabName "Install" -Operation "install" -InstalledModules $InstalledModules -DCSRoot $DCSRoot
     Create-ModuleTab -TabControl $mainTabControl -TabName "Uninstall" -Operation "uninstall" -InstalledModules $InstalledModules -DCSRoot $DCSRoot
+    
+    # Create Other tab
+    Create-OtherTab -TabControl $mainTabControl
 
     # Panel na dole głównego okna
     $bottomPanel = New-Object System.Windows.Forms.Panel
@@ -662,7 +725,7 @@ do {
     $cancelButton.Location = New-Object System.Drawing.Point(520, 15)
     $bottomPanel.Controls.Add($cancelButton)
 
-	    # Stopka
+    # Stopka
     $footerPanel = New-Object System.Windows.Forms.Panel
     $footerPanel.Height = 25
     $footerPanel.Dock = "Bottom"
