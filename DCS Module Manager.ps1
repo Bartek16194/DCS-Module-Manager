@@ -1141,12 +1141,12 @@ function Show-LiveriesUnlockConfirmation {
     Add-Type -AssemblyName System.Drawing
 
     $confirmForm = New-Object System.Windows.Forms.Form
-    $confirmForm.Text = "Confirm Liveries Unlock"
-    $confirmForm.Size = New-Object System.Drawing.Size(700, 600)
-    $confirmForm.StartPosition = "CenterScreen"
+    $confirmForm.Text            = "Confirm Liveries Unlock"
+    $confirmForm.Size            = New-Object System.Drawing.Size(700,600)
+    $confirmForm.StartPosition   = "CenterScreen"
     $confirmForm.FormBorderStyle = 'FixedDialog'
-    $confirmForm.MaximizeBox = $false
-    $confirmForm.MinimizeBox = $false
+    $confirmForm.MaximizeBox     = $false
+    $confirmForm.MinimizeBox     = $false
 
     $infoLabel = New-Object System.Windows.Forms.Label
     $infoLabel.Text     = "Files to be processed for liveries unlock:"
@@ -1160,22 +1160,21 @@ function Show-LiveriesUnlockConfirmation {
     $filesList.Size     = New-Object System.Drawing.Size(660,300)
     $filesList.Font     = New-Object System.Drawing.Font("Consolas",8)
 
-    # Deduplicate
     $unique = $FilesToProcess | Sort-Object -Unique
 
     if ($unique.Count -eq 0) {
         $filesList.Items.Add("No description.lua files found to process.")
     } else {
-        # Group by model
         $groups = @{}
         foreach ($f in $unique) {
             $parts = $f.Split("\")
             $idx = [Array]::IndexOf($parts,"Liveries")
             if ($idx -ge 0 -and $idx+1 -lt $parts.Length) {
-                $model = $parts[$idx+1]
-                $livery= if ($idx+2 -lt $parts.Length) { $parts[$idx+2] } else { "(root)" }
+                $model  = $parts[$idx+1]
+                $livery = if ($idx+2 -lt $parts.Length) { $parts[$idx+2] } else { "(root)" }
             } else {
-                $model = "Unknown"; $livery = Split-Path $f -Leaf
+                $model  = "Unknown"
+                $livery = Split-Path $f -Leaf
             }
             if (-not $groups.ContainsKey($model)) { $groups[$model] = @() }
             $groups[$model] += $livery
@@ -1203,17 +1202,18 @@ function Show-LiveriesUnlockConfirmation {
     $confirmForm.Controls.Add($pathLabel)
 
     $pathText = New-Object System.Windows.Forms.TextBox
-    $pathText.Location = New-Object System.Drawing.Point(10,375)
-    $pathText.Size     = New-Object System.Drawing.Size(660,80)
-    $pathText.Multiline = $true
+    $pathText.Location   = New-Object System.Drawing.Point(10,375)
+    $pathText.Size       = New-Object System.Drawing.Size(660,80)
+    $pathText.Multiline  = $true
     $pathText.ScrollBars = "Vertical"
-    $pathText.ReadOnly = $true
-    $pathText.Font     = New-Object System.Drawing.Font("Consolas",8)
-    $pathText.Text     = "DCS Installation: $DCSRoot`r`nExport Directory: $ExportPath"
+    $pathText.ReadOnly   = $true
+    $pathText.Font       = New-Object System.Drawing.Font("Consolas",8)
+    $pathText.Text       = "DCS Installation: $DCSRoot`r`nExport Directory: $ExportPath"
     $confirmForm.Controls.Add($pathText)
 
     $panel = New-Object System.Windows.Forms.Panel
-    $panel.Height = 60; $panel.Dock = "Bottom"
+    $panel.Height = 60
+    $panel.Dock   = "Bottom"
     $confirmForm.Controls.Add($panel)
 
     $btnOK = New-Object System.Windows.Forms.Button
@@ -1257,36 +1257,29 @@ function UnlockLiveries {
     if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
     $export = $dlg.SelectedPath
 
-    # Gather files
-    $all  = @(Get-ChildItem $bazar -Recurse -Filter description.lua)
+    # Gather files including ZIPs
+    $all = @(Get-ChildItem $bazar -Recurse -Filter description.lua)
     $all += @(Get-ChildItem $core  -Recurse -Filter description.lua)
     $zips = @(Get-ChildItem $bazar -Recurse -Filter *.zip)
     $zips += @(Get-ChildItem $core  -Recurse -Filter *.zip)
-    $mods = @('A-10A','A-10C','A-10CII','AH-64D_BLK_II','AJS37','AV8BNA','BF-109K-4','C-101CC','C-101EB',
-              'Christen Eagle II','F-15C','F-15ESE','F-16C_50','F-4E-45MC','F-5E-3','F-5E','f-86f sabre',
-              'F-14A-135-GR','f14b','FA-18C_hornet','FA-18C','FW-190A8','FW-190D9','Hawk','I-16','J-11A',
-              'JF-17','ka-50','Ka-50_3','L-39C','L-39ZA','M-2000C','MB-339A','MB-339APAN','Mi-24P','Mi-8mt',
-              'MiG-15bis','MiG-19P','MiG-21Bis','mig-29a','mig-29g','mig-29s','Mirage-F1BE','Mirage-F1CE',
-              'Mirage-F1EE','MosquitoFBMkVI','OH58D','P-47D-30','P-51D','SA342L','SA342M','SA342Minigun',
-              'SpitfireLFMkIX','SpitfireLFMkIXCW','su-25','su-25t','su-27','su-33','uh-1h','YAK-52')
 
     $descr = New-Object System.Collections.ArrayList
-    for ($i=0; $i -lt $mods.Count; $i++) {
-        Write-Progress -Activity "Filtering Modules" -Status $mods[$i] -PercentComplete (($i+1)/$mods.Count*100)
-        $found = $all | Where-Object { ($_.FullName -split '\\')[-3] -ieq $mods[$i] }
-        foreach ($f in $found) { [void]$descr.Add($f.FullName) }
-        $mzips = $zips | Where-Object { $_.FullName -match "\\$($mods[$i])\\" }
-        foreach ($zip in $mzips) {
-            $tmp = Join-Path $env:TEMP "Tmp\$($zip.BaseName)"
+    foreach ($file in $all) {
+        if ($file.FullName -match '\\Liveries\\') { [void]$descr.Add($file.FullName) }
+    }
+    foreach ($zip in $zips) {
+        if ($zip.FullName -match '\\Liveries\\') {
+            $tmp = Join-Path $env:TEMP "LiveryTmp\$($zip.BaseName)"
             New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-            $out = Join-Path $tmp "description.lua"
-            [System.IO.Compression.ZipFile]::Open($zip.FullName,'Read').Entries |
-              Where-Object Name -eq 'description.lua' |
-              ForEach-Object {[System.IO.Compression.ZipFileExtensions]::ExtractToFile($_,$out,$true)}
-            [void]$descr.Add($out)
+            $entry = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName).Entries |
+                     Where-Object Name -ieq 'description.lua'
+            if ($entry) {
+                $out = Join-Path $tmp "description.lua"
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $out, $true)
+                [void]$descr.Add($out)
+            }
         }
     }
-    Write-Progress -Activity "Filtering Modules" -Completed
     $descr = $descr | Sort-Object -Unique
 
     if ($descr.Count -eq 0) {
@@ -1294,10 +1287,13 @@ function UnlockLiveries {
         return
     }
 
-    $r = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
-    # Compare numeric values
-    if ([int]$r -ne [int][System.Windows.Forms.DialogResult]::OK) { return }
-    Write-Host "User confirmed operation - proceeding..."
+    $rAll = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
+	$r = if ($rAll -is [array]) { $rAll[0].ToString() } else { $rAll.ToString() }
+	if ($r -ne 'OK') {
+		Write-Host "User canceled or other result: $r"
+		return
+	}
+	Write-Host "User confirmed operation - proceeding..."
 
     # Patterns
     $regex   = '(?ms)^(\bcountries\b.*?\{).*?(\})'
@@ -1305,25 +1301,142 @@ function UnlockLiveries {
     $regIn   = '--[[`$1`n`t`$2]]'
 
     for ($i=0; $i -lt $descr.Count; $i++) {
-        Write-Progress -Activity "Modifying Files" -Status "$($i+1)/$($descr.Count)" -PercentComplete (($i+1)/$descr.Count*100)
+        Write-Progress -Activity "Modifying Files" -Status "$($i+1)/$($descr.Count)" -PercentComplete (100*($i+1)/$descr.Count)
         $file = $descr[$i]
         Write-Host "Modifying loop file: $file"
-        $txt = Get-Content -Path $file -Raw
+        # Read entire file content as single string
+        $txt = (Get-Content -Path $file) -join "`n"
         if ($txt -match $regCheck) { continue }
         if ($txt -match $regex) {
-            $p   = $file.Split('\')
-            $idx = [Array]::IndexOf($p,'Liveries')
-            $model  = $p[$idx+1]
-            $livery = $p[$idx+2]
+            $parts = $file.Split('\')
+            $idx   = [Array]::IndexOf($parts,'Liveries')
+            $model = $parts[$idx+1]
+            $livery= $parts[$idx+2]
             $target = Join-Path $export "Liveries\$model\$livery\description.lua"
             New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
             $new = $txt -replace $regex, $regIn
-            Set-Content -Path $target -Value $new -Encoding UTF8
+            # Write back without -Encoding
+            Set-Content -Path $target -Value $new
         }
     }
     Write-Progress -Activity "Modifying Files" -Completed
 
     [System.Windows.Forms.MessageBox]::Show("Unlock complete!`nExport path:`n$export","Done",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
+    Start-Process explorer.exe -ArgumentList $export
+	
+}
+
+function Get-LiveryPaths {
+    param($DCSRoot)
+    Add-Type -Assembly 'System.IO.Compression.FileSystem'
+
+    $bazar = Join-Path $DCSRoot "Bazar"
+    $core  = Join-Path $DCSRoot "CoreMods"
+
+    # Wszystkie description.lua w katalogach
+    $files = @(Get-ChildItem $bazar -Recurse -Filter description.lua -ErrorAction SilentlyContinue)
+    $files += @(Get-ChildItem $core  -Recurse -Filter description.lua -ErrorAction SilentlyContinue)
+
+    # ZIP-y w folderach Liveries
+    $zips = @(Get-ChildItem $bazar -Recurse -Filter *.zip -ErrorAction SilentlyContinue |
+              Where-Object FullName -match '\\Liveries\\') +
+            @(Get-ChildItem $core -Recurse -Filter *.zip -ErrorAction SilentlyContinue |
+              Where-Object FullName -match '\\Liveries\\')
+
+    foreach ($zip in $zips) {
+        $tmp = Join-Path $env:TEMP "LiveryTmp\$($zip.BaseName)"
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        $entry = [IO.Compression.ZipFile]::OpenRead($zip.FullName).Entries |
+                 Where-Object Name -ieq 'description.lua'
+        if ($entry) {
+            $out = Join-Path $tmp "description.lua"
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $out, $true)
+            $files += (Get-Item $out)
+        }
+    }
+
+    # Tylko pliki w strukturze \Liveries\ i unikalne
+    return $files |
+           Where-Object FullName -match '\\Liveries\\' |
+           Select-Object -ExpandProperty FullName |
+           Sort-Object -Unique
+}
+
+function UnlockLiveries {
+    param($DCSRoot)
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    Write-Host "UnlockLiveries: Starting with DCSRoot=$DCSRoot"
+    $bazar = Join-Path $DCSRoot "Bazar"
+    $core  = Join-Path $DCSRoot "CoreMods"
+    if (-not (Test-Path $bazar) -or -not (Test-Path $core)) {
+        [System.Windows.Forms.MessageBox]::Show(
+          "Invalid installation: missing Bazar/CoreMods","Error",
+          [System.Windows.Forms.MessageBoxButtons]::OK,
+          [System.Windows.Forms.MessageBoxIcon]::Error)
+        return
+    }
+
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = "Select export directory for liveries"
+    $dlg.ShowNewFolderButton = $true
+    $dlg.SelectedPath = [Environment]::GetFolderPath("Desktop")
+    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $export = $dlg.SelectedPath
+
+    # Pobierz wszystkie ścieżki
+    $descr = Get-LiveryPaths -DCSRoot $DCSRoot
+    if ($descr.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show(
+          "No description.lua files found under any Liveries folder.","Info",
+          [System.Windows.Forms.MessageBoxButtons]::OK,
+          [System.Windows.Forms.MessageBoxIcon]::Information)
+        return
+    }
+
+    $r = Show-LiveriesUnlockConfirmation `
+         -DCSRoot $DCSRoot `
+         -ExportPath $export `
+         -FilesToProcess $descr
+    if ([int]$r -ne [int][System.Windows.Forms.DialogResult]::OK) { return }
+
+    # Wzorce
+    $regex   = '(?ms)^(\bcountries\b.*?\{).*?(\})'
+    $regCheck= '(?ms)^--\[\[.*?\]\]'
+    $regIn   = '--[[`$1`n`t`$2]]'
+
+    # W pętli modyfikacji plików:
+for ($i = 0; $i -lt $descr.Count; $i++) {
+    Write-Progress -Activity "Modifying Files" -Status "$($i+1)/$($descr.Count)" -PercentComplete (100*($i+1)/$descr.Count)
+    $file = $descr[$i]
+    Write-Host "Modifying loop file: $file"
+    try {
+        $lines = Get-Content -LiteralPath $file -ErrorAction Stop
+        $txt   = $lines -join "`n"
+    } catch {
+        Write-Host "Skipping unreadable file: $file"
+        continue
+    }
+    if ($txt -match $regCheck) { continue }
+    if ($txt -match $regex) {
+        $parts  = $file.Split('\')
+        $idx    = [Array]::IndexOf($parts,'Liveries')
+        $model  = $parts[$idx+1]
+        $livery = $parts[$idx+2]
+        $target = Join-Path $export "Liveries\$model\$livery\description.lua"
+        New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
+        $new = $txt -replace $regex, $regIn
+        Set-Content -LiteralPath $target -Value $new
+    }
+}
+Write-Progress -Activity "Modifying Files" -Completed
+
+    [System.Windows.Forms.MessageBox]::Show(
+      "Unlock complete!`nExport path:`n$export","Done",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information)
+
     Start-Process explorer.exe -ArgumentList $export
 }
 
