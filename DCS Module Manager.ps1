@@ -1,6 +1,42 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+function Test-Administrator {
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal   = New-Object Security.Principal.WindowsPrincipal($currentUser)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Show-AdminRequiredDialog {
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text            = "Administrator Rights Required"
+    $f.Size            = New-Object System.Drawing.Size(500,200)
+    $f.StartPosition   = "CenterScreen"
+    $f.FormBorderStyle = 'FixedDialog'
+    $f.MaximizeBox     = $false
+    $f.MinimizeBox     = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text     = "Administrator privileges are required to use Switch User.`nRestart now with elevated rights?"
+    $lbl.Location = New-Object System.Drawing.Point(20,20)
+    $lbl.Size     = New-Object System.Drawing.Size(460,60)
+    $f.Controls.Add($lbl)
+
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text     = "Restart as Administrator"
+    $btn.Size     = New-Object System.Drawing.Size(160,30)
+    $btn.Location = New-Object System.Drawing.Point(160,100)
+    $btn.Add_Click({
+        $f.Tag = "restart"
+        $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $f.Close()
+    })
+    $f.Controls.Add($btn)
+
+    $f.ShowDialog() | Out-Null
+    return $f.Tag
+}
+
 # Klucz rejestru dla konfiguracji
 $RegistryPath = "HKCU:\Software\DCSModuleInstaller"
 
@@ -630,17 +666,486 @@ function Create-ModuleTab {
     })
 }
 
+function Show-ShaderCleanupConfirmation {
+    param($DCSRoot, $DCSProfile, $FilesToDelete)
+    
+    $confirmForm = New-Object System.Windows.Forms.Form
+    $confirmForm.Text = "Confirm Shader Cleanup"
+    $confirmForm.Size = New-Object System.Drawing.Size(700, 600)
+    $confirmForm.StartPosition = "CenterScreen"
+    $confirmForm.FormBorderStyle = 'FixedDialog'
+    $confirmForm.MaximizeBox = $false
+    $confirmForm.MinimizeBox = $false
+    
+    # Label z informacją
+    $infoLabel = New-Object System.Windows.Forms.Label
+    $infoLabel.Text = "Files to be deleted during shader cleanup:"
+    $infoLabel.Location = New-Object System.Drawing.Point(10, 10)
+    $infoLabel.Size = New-Object System.Drawing.Size(660, 20)
+    $infoLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 9, [System.Drawing.FontStyle]::Bold)
+    $confirmForm.Controls.Add($infoLabel)
+    
+    # Lista plików do usunięcia
+    $filesList = New-Object System.Windows.Forms.ListBox
+    $filesList.Location = New-Object System.Drawing.Point(10, 35)
+    $filesList.Size = New-Object System.Drawing.Size(660, 350)
+    $filesList.Font = New-Object System.Drawing.Font("Consolas", 8)
+    
+    # Dodaj informacje o plikach
+    $totalFiles = 0
+    $totalSize = 0
+    
+    foreach ($location in $FilesToDelete.Keys) {
+        $files = $FilesToDelete[$location]
+        if ($files.Count -gt 0) {
+            $filesList.Items.Add("=== $location ===")
+            foreach ($file in $files) {
+                $size = [math]::Round($file.Length / 1MB, 2)
+                $totalSize += $file.Length
+                $totalFiles++
+                $filesList.Items.Add("  $($file.Name) ($size MB)")
+            }
+            $filesList.Items.Add("")
+        }
+    }
+    
+    if ($totalFiles -eq 0) {
+        $filesList.Items.Add("No shader cache files found to delete.")
+    } else {
+        $totalSizeMB = [math]::Round($totalSize / 1MB, 2)
+        $filesList.Items.Add("TOTAL: $totalFiles files, $totalSizeMB MB")
+    }
+    
+    $confirmForm.Controls.Add($filesList)
+    
+    # Label dla ścieżek
+    $pathLabel = New-Object System.Windows.Forms.Label
+    $pathLabel.Text = "Paths being processed:"
+    $pathLabel.Location = New-Object System.Drawing.Point(10, 400)
+    $pathLabel.Size = New-Object System.Drawing.Size(660, 20)
+    $pathLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 9, [System.Drawing.FontStyle]::Bold)
+    $confirmForm.Controls.Add($pathLabel)
+    
+    # TextBox ze ścieżkami
+    $pathTextBox = New-Object System.Windows.Forms.TextBox
+    $pathTextBox.Location = New-Object System.Drawing.Point(10, 425)
+    $pathTextBox.Size = New-Object System.Drawing.Size(660, 80)
+    $pathTextBox.Multiline = $true
+    $pathTextBox.ScrollBars = "Vertical"
+    $pathTextBox.ReadOnly = $true
+    $pathTextBox.Font = New-Object System.Drawing.Font("Consolas", 8)
+    $pathTextBox.Text = "DCS Installation: $DCSRoot`r`nDCS Profile: $DCSProfile"
+    $confirmForm.Controls.Add($pathTextBox)
+    
+    # Panel z przyciskami
+    $buttonPanel = New-Object System.Windows.Forms.Panel
+    $buttonPanel.Height = 60
+    $buttonPanel.Dock = "Bottom"
+    $confirmForm.Controls.Add($buttonPanel)
+    
+    # Przycisk Execute
+    $executeButton = New-Object System.Windows.Forms.Button
+    $executeButton.Text = "Execute Cleanup"
+    $executeButton.Size = New-Object System.Drawing.Size(120, 30)
+    $executeButton.Location = New-Object System.Drawing.Point(200, 15)
+    $executeButton.BackColor = [System.Drawing.Color]::LightCoral
+    $buttonPanel.Controls.Add($executeButton)
+    
+    # Przycisk Cancel
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = "Cancel"
+    $cancelButton.Size = New-Object System.Drawing.Size(80, 30)
+    $cancelButton.Location = New-Object System.Drawing.Point(340, 15)
+    $buttonPanel.Controls.Add($cancelButton)
+    
+    # Event handlers
+    $executeButton.Add_Click({
+        $result = [System.Windows.Forms.MessageBox]::Show("Are you sure you want to delete these shader cache files?`n`nThis will clear $totalFiles files ($([math]::Round($totalSize / 1MB, 2)) MB)", "Confirm Deletion", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+        if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $confirmForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $confirmForm.Close()
+        }
+    })
+    
+    $cancelButton.Add_Click({
+        $confirmForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $confirmForm.Close()
+    })
+    
+    return $confirmForm.ShowDialog()
+}
+
+function ClearShaders {
+    param($DCSRoot)
+    
+    # Zapytaj o folder profilu DCS
+    $profileDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $profileDialog.Description = "Select DCS Profile Folder (Saved Games)"
+    $profileDialog.ShowNewFolderButton = $false
+    
+    # Domyślna ścieżka do profilu DCS
+    $defaultProfilePath = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta"
+    if (Test-Path $defaultProfilePath) {
+        $profileDialog.SelectedPath = $defaultProfilePath
+    }
+    
+    if ($profileDialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        [System.Windows.Forms.MessageBox]::Show("Profile folder selection canceled.", "Shader Cleanup Aborted", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        return
+    }
+    $DCSProfile = $profileDialog.SelectedPath
+    
+    # Sprawdź czy foldery istnieją
+    if (-not (Test-Path $DCSProfile)) {
+        [System.Windows.Forms.MessageBox]::Show("DCS Profile folder not found: $DCSProfile", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        return
+    }
+    
+    if (-not (Test-Path $DCSRoot)) {
+        [System.Windows.Forms.MessageBox]::Show("DCS Installation folder not found: $DCSRoot", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        return
+    }
+    
+    $DCSEXE_FILE = Join-Path $DCSRoot "bin\DCS.exe"
+    if (-not (Test-Path $DCSEXE_FILE)) {
+        [System.Windows.Forms.MessageBox]::Show("DCS.exe not found: $DCSEXE_FILE", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        return
+    }
+    
+    try {
+        # Funkcja pomocnicza do znajdowania plików
+        function Find-ShaderFiles {
+            param($Folder, $Extension)
+            
+            $files = @()
+            if (Test-Path $Folder) {
+                $files = Get-ChildItem -Path $Folder -Filter "*$Extension" -Recurse -ErrorAction SilentlyContinue
+            }
+            return $files
+        }
+        
+        # Znajdź wszystkie pliki do usunięcia
+        $filesToDelete = @{}
+        
+        # Profile metashaders i fxo
+        $ProfileMeta = Join-Path $DCSProfile "metashaders2"
+        $ProfileFXO = Join-Path $DCSProfile "fxo"
+        
+        $filesToDelete["Profile Metashaders"] = Find-ShaderFiles -Folder $ProfileMeta -Extension ".meta2"
+        $filesToDelete["Profile FXO"] = Find-ShaderFiles -Folder $ProfileFXO -Extension ".fxo"
+        
+        # Terrain cache
+        $TerrainsFolder = Join-Path $DCSRoot "Mods\terrains"
+        if (Test-Path $TerrainsFolder) {
+            $terrains = Get-ChildItem -Path $TerrainsFolder -Directory -ErrorAction SilentlyContinue
+            foreach ($terrain in $terrains) {
+                $terrainMetaPath = Join-Path $terrain.FullName "misc\metacache\dcs"
+                $terrainFXOPath = Join-Path $terrain.FullName "misc\shadercache"
+                
+                $terrainMetaFiles = Find-ShaderFiles -Folder $terrainMetaPath -Extension ".meta2"
+                $terrainFXOFiles = Find-ShaderFiles -Folder $terrainFXOPath -Extension ".fxo"
+                
+                if ($terrainMetaFiles.Count -gt 0) {
+                    $filesToDelete["$($terrain.Name) - Metashaders"] = $terrainMetaFiles
+                }
+                if ($terrainFXOFiles.Count -gt 0) {
+                    $filesToDelete["$($terrain.Name) - FXO"] = $terrainFXOFiles
+                }
+            }
+        }
+        
+        # Pokaż raport i zapytaj o potwierdzenie
+        $result = Show-ShaderCleanupConfirmation -DCSRoot $DCSRoot -DCSProfile $DCSProfile -FilesToDelete $filesToDelete
+        
+        if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+            return
+        }
+        
+        # Wykonaj czyszczenie
+        $deletedFiles = 0
+        $errors = @()
+        
+        foreach ($location in $filesToDelete.Keys) {
+            foreach ($file in $filesToDelete[$location]) {
+                try {
+                    Remove-Item -Path $file.FullName -Force
+                    $deletedFiles++
+                }
+                catch {
+                    $errors += "Failed to delete: $($file.FullName)"
+                }
+            }
+        }
+        
+        # Pokaż wynik
+        $message = "Shader cleanup completed!`n`nDeleted files: $deletedFiles"
+        if ($errors.Count -gt 0) {
+            $message += "`n`nErrors encountered: $($errors.Count)"
+            $message += "`n" + ($errors -join "`n")
+        }
+        
+        [System.Windows.Forms.MessageBox]::Show($message, "Cleanup Complete", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+    }
+    catch {
+        [System.Windows.Forms.MessageBox]::Show("Error during shader cleanup:`n$($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    }
+}
+
+function Show-SwitchUserConfirmation {
+    param(
+        [string]$FolderName,
+        [string]$NewProfileDir,
+        [string]$DCSOpenBetaDir,
+        [string[]]$FoldersToLink,
+        [string]$DCSRoot
+    )
+
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text            = "Confirm Profile Creation"
+    $f.Size            = New-Object System.Drawing.Size(700,600)
+    $f.StartPosition   = "CenterScreen"
+    $f.FormBorderStyle = 'FixedDialog'
+    $f.MaximizeBox     = $false
+    $f.MinimizeBox     = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text     = "Profile: $FolderName`nNew folder: $NewProfileDir"
+    $lbl.Location = New-Object System.Drawing.Point(10,10)
+    $lbl.Size     = New-Object System.Drawing.Size(660,40)
+    $lbl.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",10,[System.Drawing.FontStyle]::Bold)
+    $f.Controls.Add($lbl)
+
+    $list = New-Object System.Windows.Forms.ListBox
+    $list.Location = New-Object System.Drawing.Point(10,60)
+    $list.Size     = New-Object System.Drawing.Size(660,350)
+    $list.Font     = New-Object System.Drawing.Font("Consolas",8)
+    $f.Controls.Add($list)
+
+    $list.Items.Add("Folders to link:")
+    foreach ($folder in $FoldersToLink) {
+        $src = Join-Path $DCSOpenBetaDir $folder
+        if (Test-Path $src) {
+			$list.Items.Add("  $folder -> $src")
+		} else {
+			$list.Items.Add("  $folder -> [missing]")
+		}
+    }
+    $list.Items.Add("Config\Input -> " + (Join-Path $DCSOpenBetaDir "Config\Input"))
+    $list.Items.Add("")
+    $list.Items.Add("Desktop shortcut: DCS $FolderName.lnk")
+    $list.Items.Add("Arguments: -w $FolderName")
+
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Text     = "Create Profile"
+    $btnOK.Size     = New-Object System.Drawing.Size(120,30)
+    $btnOK.Location = New-Object System.Drawing.Point(200,520)
+    $btnOK.BackColor= [System.Drawing.Color]::LightBlue
+    $btnOK.Add_Click({
+        $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $f.Close()
+    })
+    $f.Controls.Add($btnOK)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text     = "Cancel"
+    $btnCancel.Size     = New-Object System.Drawing.Size(80,30)
+    $btnCancel.Location = New-Object System.Drawing.Point(340,520)
+    $btnCancel.Add_Click({
+        $f.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $f.Close()
+    })
+    $f.Controls.Add($btnCancel)
+
+    $result = $f.ShowDialog()
+    $f.Dispose()
+    return $result
+}
+
+function SwitchUser {
+    param($DCSRoot)
+
+    Write-Host "SwitchUser: called with DCSRoot=$DCSRoot"
+
+    # 1. Check admin
+    if (-not (Test-Administrator)) {
+    $choice = Show-AdminRequiredDialog
+    if ($choice -eq "restart") {
+        # Ścieżka do bieżącego pliku (PS1 lub EXE)
+        $launchPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        Start-Process -FilePath $launchPath -Verb RunAs
+        [System.Windows.Forms.Application]::Exit()
+    }
+    return
+}
+    Write-Host "SwitchUser: running as admin"
+
+    # 2. Validate DCS.openbeta
+    $dcsOpenBetaDir = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta"
+    if (-not (Test-Path $dcsOpenBetaDir)) {
+        [System.Windows.Forms.MessageBox]::Show("DCS.openbeta not found:`n$dcsOpenBetaDir","Error")
+        return
+    }
+
+    # 3. Prompt profile name
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text            = "Create New DCS Profile"
+    $form.Size            = New-Object System.Drawing.Size(400,200)
+    $form.StartPosition   = "CenterScreen"
+    $form.FormBorderStyle = 'FixedDialog'; $form.MaximizeBox = $false; $form.MinimizeBox = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text     = "Enter new profile name:"
+    $lbl.Location = New-Object System.Drawing.Point(20,20)
+    $lbl.Size     = New-Object System.Drawing.Size(350,20)
+    $form.Controls.Add($lbl)
+
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Location = New-Object System.Drawing.Point(20,50)
+    $tb.Size     = New-Object System.Drawing.Size(340,20)
+    $form.Controls.Add($tb)
+
+    $btnNext = New-Object System.Windows.Forms.Button
+    $btnNext.Text     = "Next >"
+    $btnNext.Location = New-Object System.Drawing.Point(200,90)
+    $btnNext.Size     = New-Object System.Drawing.Size(100,30)
+    $btnNext.Add_Click({
+        if ($tb.Text.Trim()) {
+            $form.Tag = $tb.Text.Trim()
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $form.Close()
+        } else {
+            [System.Windows.Forms.MessageBox]::Show("Enter profile name.","Warning",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    })
+    $form.Controls.Add($btnNext)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text     = "Cancel"
+    $btnCancel.Location = New-Object System.Drawing.Point(310,90)
+    $btnCancel.Size     = New-Object System.Drawing.Size(60,30)
+    $btnCancel.Add_Click({
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $form.Close()
+    })
+    $form.Controls.Add($btnCancel)
+
+    if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-Host "SwitchUser: user canceled input"
+        return
+    }
+    $folderName    = $form.Tag
+    $newProfileDir = Join-Path $env:USERPROFILE "Saved Games\$folderName"
+    Write-Host "SwitchUser: folderName=$folderName newDir=$newProfileDir"
+
+    # 4. Overwrite existing?
+    if (Test-Path $newProfileDir) {
+        $ov = [System.Windows.Forms.MessageBox]::Show("Profile exists. Overwrite?","Confirm",[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Question)
+        if ($ov -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    }
+
+    $foldersToLink = @("missions","Backup","Data","ImagesShop","Kneeboard","Liveries","Logs","MG","MiG-21Bis","MissionEditor","Mods","Movies","Scratchpad","ScreenShots","Scripts","StaticTemplate","Tracks")
+
+    # 5. Confirmation
+    $conf = Show-SwitchUserConfirmation `
+    -FolderName $folderName `
+    -NewProfileDir $newProfileDir `
+    -DCSOpenBetaDir $dcsOpenBetaDir `
+    -FoldersToLink $foldersToLink `
+    -DCSRoot $DCSRoot
+Write-Host "SwitchUser: confirmation result = $conf"
+
+if ($conf -eq [System.Windows.Forms.DialogResult]::OK) {
+    Write-Host "SwitchUser: confirmed, proceeding..."
+
+    try {
+        # 6. Utwórz nowy katalog profilu
+        if (Test-Path $newProfileDir) { Remove-Item -Path $newProfileDir -Recurse -Force }
+        New-Item -Path $newProfileDir -ItemType Directory -Force | Out-Null
+
+        # 7. Utwórz symbolic links
+        $links = 0; $errors = @()
+        foreach ($fld in $foldersToLink) {
+            $src = Join-Path $dcsOpenBetaDir $fld
+            if (Test-Path $src) {
+                $ln = Join-Path $newProfileDir $fld
+                New-Item -ItemType SymbolicLink -Path $ln -Target $src -Force | Out-Null
+                $links++
+            }
+        }
+
+        # 8. Utwórz folder Config
+        $configDir = Join-Path $newProfileDir "Config"
+        if (-not (Test-Path $configDir)) {
+            New-Item -Path $configDir -ItemType Directory -Force | Out-Null
+        }
+
+        # 9. Kopiuj wszystkie pliki z DCS.openbeta
+        Get-ChildItem -Path $dcsOpenBetaDir -File -Force |
+          ForEach-Object { Copy-Item -Path $_.FullName -Destination $newProfileDir -Force }
+
+        # 10. Kopiuj Config (bez Input i network.vault)
+        Get-ChildItem -Path (Join-Path $dcsOpenBetaDir "Config") -File -Force |
+          Where-Object { $_.Name -notin "Input","network.vault" } |
+          ForEach-Object { Copy-Item -Path $_.FullName -Destination $configDir -Force }
+
+        Get-ChildItem -Path (Join-Path $dcsOpenBetaDir "Config") -Directory -Force |
+          Where-Object { $_.Name -ne "Input" } |
+          ForEach-Object {
+            $dest = Join-Path $configDir $_.Name
+            Copy-Item -Path $_.FullName -Destination $dest -Recurse -Force
+        }
+
+        # 11. Symlink do Input
+        $inSrc = Join-Path $dcsOpenBetaDir "Config\Input"
+        $inLn  = Join-Path $configDir "Input"
+        if (Test-Path $inSrc) {
+            New-Item -ItemType SymbolicLink -Path $inLn -Target $inSrc -Force | Out-Null
+            $links++
+        }
+
+        # 12. Skrót na pulpicie
+        $dcsExe = Join-Path $DCSRoot "bin\DCS.exe"
+        if (-not (Test-Path $dcsExe)) { $dcsExe = Join-Path $DCSRoot "bin-mt\DCS.exe" }
+        $shell = New-Object -ComObject WScript.Shell
+        $scFile = Join-Path ([Environment]::GetFolderPath("Desktop")) "DCS $folderName.lnk"
+        $sc = $shell.CreateShortcut($scFile)
+        $sc.TargetPath      = $dcsExe
+        $sc.Arguments       = "-w $folderName"
+        $sc.WorkingDirectory= $newProfileDir
+        $sc.Save()
+
+        [System.Windows.Forms.MessageBox]::Show(
+            "Profile created!`nSymbolic links: $links",
+            "Done",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        )
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Error: $($_.Exception.Message)",
+            "Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+    }
+} else {
+    Write-Host "SwitchUser: aborted confirm"
+    return
+}
+}
+
 function Create-OtherTab {
-    param($TabControl)
+    param($TabControl, $DCSRoot)
     
     # Utwórz zakładkę Other
     $otherTab = New-Object System.Windows.Forms.TabPage
     $otherTab.Text = "Other"
     $TabControl.Controls.Add($otherTab)
     
-    # Panel główny
+    # Panel główny z scrollowaniem
     $mainPanel = New-Object System.Windows.Forms.Panel
     $mainPanel.Dock = "Fill"
+    $mainPanel.AutoScroll = $true
     $otherTab.Controls.Add($mainPanel)
     
     # Przycisk Input Backup
@@ -651,18 +1156,60 @@ function Create-OtherTab {
     $backupButton.BackColor = [System.Drawing.Color]::LightGreen
     $mainPanel.Controls.Add($backupButton)
     
-    # Event handler dla przycisku
+    # Event handler dla przycisku backup
     $backupButton.Add_Click({
         BackupInputFiles
     })
     
-    # Label z opisem
-    $descLabel = New-Object System.Windows.Forms.Label
-    $descLabel.Text = "Backup your DCS Input configuration files to a safe location."
-    $descLabel.Location = New-Object System.Drawing.Point(20, 70)
-    $descLabel.Size = New-Object System.Drawing.Size(400, 20)
-    $descLabel.ForeColor = [System.Drawing.Color]::Gray
-    $mainPanel.Controls.Add($descLabel)
+    # Label z opisem backup
+    $descLabel1 = New-Object System.Windows.Forms.Label
+    $descLabel1.Text = "Backup your DCS Input configuration files to a safe location."
+    $descLabel1.Location = New-Object System.Drawing.Point(20, 70)
+    $descLabel1.Size = New-Object System.Drawing.Size(500, 20)
+    $descLabel1.ForeColor = [System.Drawing.Color]::Gray
+    $mainPanel.Controls.Add($descLabel1)
+    
+    # Przycisk Clear Shaders
+    $shadersButton = New-Object System.Windows.Forms.Button
+    $shadersButton.Text = "Clear Shaders"
+    $shadersButton.Size = New-Object System.Drawing.Size(150, 40)
+    $shadersButton.Location = New-Object System.Drawing.Point(20, 110)
+    $shadersButton.BackColor = [System.Drawing.Color]::LightCoral
+    $mainPanel.Controls.Add($shadersButton)
+    
+    # Event handler dla przycisku shaders
+    $shadersButton.Add_Click({
+        ClearShaders -DCSRoot $DCSRoot
+    })
+    
+    # Label z opisem shaders
+    $descLabel2 = New-Object System.Windows.Forms.Label
+    $descLabel2.Text = "Clear shader cache (.meta2 and .fxo files) to improve performance."
+    $descLabel2.Location = New-Object System.Drawing.Point(20, 160)
+    $descLabel2.Size = New-Object System.Drawing.Size(500, 20)
+    $descLabel2.ForeColor = [System.Drawing.Color]::Gray
+    $mainPanel.Controls.Add($descLabel2)
+    
+    # Przycisk Switch User
+    $switchUserButton = New-Object System.Windows.Forms.Button
+    $switchUserButton.Text = "Switch User"
+    $switchUserButton.Size = New-Object System.Drawing.Size(150, 40)
+    $switchUserButton.Location = New-Object System.Drawing.Point(20, 200)
+    $switchUserButton.BackColor = [System.Drawing.Color]::LightBlue
+    $mainPanel.Controls.Add($switchUserButton)
+    
+    # Event handler dla przycisku switch user
+    $switchUserButton.Add_Click({
+        SwitchUser -DCSRoot $DCSRoot
+    })
+    
+    # Label z opisem switch user
+    $descLabel3 = New-Object System.Windows.Forms.Label
+    $descLabel3.Text = "Create a new DCS profile that shares settings and inputs but uses separate Eagle Dynamics account.`nUseful for multiple accounts or testing different configurations."
+    $descLabel3.Location = New-Object System.Drawing.Point(20, 250)
+    $descLabel3.Size = New-Object System.Drawing.Size(500, 40)
+    $descLabel3.ForeColor = [System.Drawing.Color]::Gray
+    $mainPanel.Controls.Add($descLabel3)
 }
 
 # --- Main script ---
@@ -701,7 +1248,7 @@ do {
     Create-ModuleTab -TabControl $mainTabControl -TabName "Uninstall" -Operation "uninstall" -InstalledModules $InstalledModules -DCSRoot $DCSRoot
     
     # Create Other tab
-    Create-OtherTab -TabControl $mainTabControl
+    Create-OtherTab -TabControl $mainTabControl -DCSRoot $DCSRoot
 
     # Panel na dole głównego okna
     $bottomPanel = New-Object System.Windows.Forms.Panel
