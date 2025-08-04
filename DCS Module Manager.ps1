@@ -1334,7 +1334,7 @@ function UnlockLiveries {
         return
     }
 
-    Write-Host "DEBUG: Showing export folder dialog"
+    # Prompt for export folder
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
     $dlg.Description         = "Select export directory for liveries"
     $dlg.ShowNewFolderButton = $true
@@ -1345,9 +1345,8 @@ function UnlockLiveries {
         return
     }
     $export = $dlg.SelectedPath
-    Write-Host "DEBUG: Selected export path = $export"
 
-    Write-Host "DEBUG: Collecting description.lua files"
+    # Gather description.lua files
     $descr = @(Get-ChildItem $bazar  -Recurse -Filter description.lua -ErrorAction SilentlyContinue |
                Where-Object FullName -match '\\Liveries\\' |
                Select-Object -ExpandProperty FullName) +
@@ -1355,35 +1354,32 @@ function UnlockLiveries {
                Where-Object FullName -match '\\Liveries\\' |
                Select-Object -ExpandProperty FullName)
     $descr = $descr | Sort-Object -Unique
-    Write-Host "DEBUG: Found $($descr.Count) description.lua files"
 
     if ($descr.Count -eq 0) {
-        Write-Host "DEBUG: No files to process, exiting"
+        [System.Windows.Forms.MessageBox]::Show("No liveries found to unlock.","Info",
+            [System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
         return
     }
 
-    # Confirmation dialog
+    # Show confirmation dialog
     $confirm = Show-LiveriesUnlockConfirmation -DCSRoot $DCSRoot -ExportPath $export -FilesToProcess $descr
     if ($confirm -ne [System.Windows.Forms.DialogResult]::OK) {
         Write-Host "DEBUG: User cancelled unlock"
         return
     }
 
-    # Create progress form
+    # Progress UI
     $progressForm = New-Object System.Windows.Forms.Form
     $progressForm.Text = "Unlocking Liveries"
     $progressForm.Size = New-Object System.Drawing.Size(500,120)
     $progressForm.StartPosition = "CenterScreen"
     $progressForm.FormBorderStyle = 'FixedDialog'
-    $progressForm.MaximizeBox = $false
-    $progressForm.MinimizeBox = $false
+    $progressForm.MaximizeBox = $false; $progressForm.MinimizeBox = $false
 
     $progressBar = New-Object System.Windows.Forms.ProgressBar
     $progressBar.Location = New-Object System.Drawing.Point(20,20)
     $progressBar.Size = New-Object System.Drawing.Size(440,25)
-    $progressBar.Minimum = 0
-    $progressBar.Maximum = $descr.Count
-    $progressBar.Value = 0
+    $progressBar.Minimum = 0; $progressBar.Maximum = $descr.Count; $progressBar.Value = 0
     $progressForm.Controls.Add($progressBar)
 
     $statusLabel = New-Object System.Windows.Forms.Label
@@ -1396,21 +1392,24 @@ function UnlockLiveries {
     $progressForm.Show()
     $progressForm.Refresh()
 
-    Write-Host "DEBUG: Starting to modify files"
+    # Processing files
     $regex    = '(?ms)^(\bcountries\b.*?\{).*?(\})'
     $regCheck = '(?ms)^--\[\[.*?\]\]'
     $regIn    = '--[[$1`n`t$2]]'
+    $processed = 0
+    $skipped    = 0
+    $errors     = @()
 
     for ($i = 0; $i -lt $descr.Count; $i++) {
         $file = $descr[$i]
         try {
             $txt = Get-Content -Raw $file -ErrorAction Stop
         } catch {
-            Write-Host "DEBUG: Failed to read $file"
+            $errors += "Failed to read: $file"
             continue
         }
         if ($txt -match $regCheck) {
-            Write-Host "DEBUG: Already unlocked, skipping $file"
+            $skipped++
         }
         elseif ($txt -match $regex) {
             $parts  = $file.Split('\')
@@ -1418,21 +1417,75 @@ function UnlockLiveries {
             $model  = $parts[$idx+1]
             $livery = $parts[$idx+2]
             $target = Join-Path $export "Liveries\$model\$livery\description.lua"
-            New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
-            ($txt -replace $regex, $regIn) | Set-Content -LiteralPath $target
-            Write-Host "DEBUG: Unlocking $model/$livery to $target"
+            try {
+                New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
+                ($txt -replace $regex, $regIn) | Set-Content -LiteralPath $target
+                $processed++
+            } catch {
+                $errors += "Failed to write: $target"
+            }
         } else {
-            Write-Host "DEBUG: No countries block in $file"
+            $skipped++
         }
-        # Update progress bar
+        # Update progress
         $progressBar.Value = $i + 1
-        $statusLabel.Text = "Processing $($i + 1) of $($descr.Count)..."
+        $statusLabel.Text  = "Processing $($i + 1) of $($descr.Count)..."
         $progressForm.Refresh()
     }
 
     $progressForm.Close()
+
+    # Show result dialog
+    $resultForm = New-Object System.Windows.Forms.Form
+    $resultForm.Text = "Liveries Unlock Result"
+    $resultForm.Size = New-Object System.Drawing.Size(500,300)
+    $resultForm.StartPosition = "CenterScreen"
+    $resultForm.FormBorderStyle = 'FixedDialog'
+    $resultForm.MaximizeBox = $false; $resultForm.MinimizeBox = $false
+
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Font = New-Object System.Drawing.Font("Microsoft Sans Serif",10,[System.Drawing.FontStyle]::Bold)
+    $statusLabel.Location = New-Object System.Drawing.Point(20,20)
+    if ($errors.Count -eq 0) {
+        $statusLabel.Text = "SUCCESS: Liveries unlocked!"
+        $statusLabel.ForeColor = [System.Drawing.Color]::Green
+    } else {
+        $statusLabel.Text = "COMPLETED with errors"
+        $statusLabel.ForeColor = [System.Drawing.Color]::OrangeRed
+    }
+    $statusLabel.Size = New-Object System.Drawing.Size(440,25)
+    $resultForm.Controls.Add($statusLabel)
+
+    $detailLabel = New-Object System.Windows.Forms.Label
+    $detailLabel.Location = New-Object System.Drawing.Point(20,55)
+    $detailLabel.Size = New-Object System.Drawing.Size(440,60)
+    $detailLabel.Text = "Processed: $processed`nSkipped: $skipped`nErrors: $($errors.Count)"
+    $resultForm.Controls.Add($detailLabel)
+
+    if ($errors.Count -gt 0) {
+        $errorsBox = New-Object System.Windows.Forms.TextBox
+        $errorsBox.Location = New-Object System.Drawing.Point(20,120)
+        $errorsBox.Size = New-Object System.Drawing.Size(440,100)
+        $errorsBox.Multiline = $true
+        $errorsBox.ScrollBars = "Vertical"
+        $errorsBox.ReadOnly = $true
+        $errorsBox.Font = New-Object System.Drawing.Font("Consolas",8)
+        $errorsBox.Text = $errors -join "`r`n"
+        $resultForm.Controls.Add($errorsBox)
+    }
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = "OK"
+    $okButton.Size = New-Object System.Drawing.Size(80,30)
+    $okButton.Location = New-Object System.Drawing.Point(210,240)
+    $okButton.Add_Click({ $resultForm.Close() })
+    $resultForm.Controls.Add($okButton)
+
+    $resultForm.ShowDialog()
     Write-Host "DEBUG: UnlockLiveries completed"
 }
+
+
 function Create-OtherTab {
     param($TabControl, $DCSRoot)
     
@@ -1543,7 +1596,7 @@ do {
 
     # Create form
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "DCS Module Manager - $DCSRoot"
+    $form.Text = "DCS Utility Tool - $DCSRoot"
     $form.Size = New-Object System.Drawing.Size(700, 750)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = 'FixedDialog'
