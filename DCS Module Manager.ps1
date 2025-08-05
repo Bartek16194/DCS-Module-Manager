@@ -1485,21 +1485,122 @@ function UnlockLiveries {
     Write-Host "DEBUG: UnlockLiveries completed"
 }
 
+function Show-TempCleanupConfirmation {
+    param(
+        [string]$TempFolder,
+        [System.IO.FileInfo[]]$Files
+    )
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $totalFiles = $Files.Count
+    $totalSize  = [math]::Round(($Files | Measure-Object Length -Sum).Sum / 1MB, 2)
+
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text            = "Confirm Temp Cleanup"
+    $f.Size            = New-Object System.Drawing.Size(700,600)
+    $f.StartPosition   = "CenterScreen"
+    $f.FormBorderStyle = 'FixedDialog'
+    $f.MaximizeBox     = $false
+    $f.MinimizeBox     = $false
+
+    $lst = New-Object System.Windows.Forms.ListBox
+    $lst.Location = New-Object System.Drawing.Point(10,10)
+    $lst.Size     = New-Object System.Drawing.Size(660,450)
+    $lst.Font     = New-Object System.Drawing.Font("Consolas",8)
+    foreach ($file in $Files) {
+        [void]$lst.Items.Add("$($file.Name) ($([math]::Round($file.Length/1MB,2)) MB)")
+    }
+    [void]$lst.Items.Add("TOTAL: $totalFiles files, $totalSize MB")
+    $f.Controls.Add($lst)
+
+    $panel = New-Object System.Windows.Forms.Panel
+    $panel.Height = 60
+    $panel.Dock   = 'Bottom'
+    $f.Controls.Add($panel)
+
+    $btnOK = New-Object System.Windows.Forms.Button
+    $btnOK.Text         = "Execute Cleanup"
+    $btnOK.Size         = New-Object System.Drawing.Size(120,30)
+    $btnOK.Location     = New-Object System.Drawing.Point(200,15)
+    $btnOK.BackColor    = [System.Drawing.Color]::LightCoral
+    $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $panel.Controls.Add($btnOK)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text         = "Cancel"
+    $btnCancel.Size         = New-Object System.Drawing.Size(80,30)
+    $btnCancel.Location     = New-Object System.Drawing.Point(340,15)
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $panel.Controls.Add($btnCancel)
+
+    $f.AcceptButton = $btnOK
+    $f.CancelButton = $btnCancel
+
+    return $f.ShowDialog()
+}
+
+function ClearTemp {
+    Add-Type -AssemblyName System.Windows.Forms
+
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description         = "Select DCS Saved Games profile"
+    $dlg.ShowNewFolderButton = $false
+    $def = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta"
+    if (Test-Path $def) { $dlg.SelectedPath = $def }
+    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $profile = Split-Path $dlg.SelectedPath -Leaf
+    $temp    = Join-Path $env:LOCALAPPDATA "Temp\$profile"
+
+    if (-not (Test-Path $temp)) {
+        [System.Windows.Forms.MessageBox]::Show("Nothing to delete:`n$temp","Info","OK","Information")
+        return
+    }
+
+    $files = Get-ChildItem -Path $temp -Recurse -File
+    $res   = Show-TempCleanupConfirmation -TempFolder $temp -Files $files
+    Write-Host "[DEBUG] DialogResult = $res"
+    if ($res -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-Host "[DEBUG] Cleanup cancelled by user"
+        return
+    }
+
+    Get-Process | Where-Object {
+        $_.Modules 2>$null | Where-Object { $_.FileName -like "*Temp\$profile*" }
+    } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+    Start-Sleep -Milliseconds 200
+
+    foreach ($f in $files) {
+        attrib -s -h -r $f.FullName 2>$null
+        Remove-Item -Path $f.FullName -Force -ErrorAction SilentlyContinue
+    }
+
+    Get-ChildItem -Path $temp -Recurse -Directory |
+      Sort-Object FullName -Descending |
+      Remove-Item -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
+
+    [System.Windows.Forms.MessageBox]::Show("Temp cleanup completed.","Success","OK","Information")
+}
+
+
 
 function Create-OtherTab {
     param($TabControl, $DCSRoot)
-    
+
     # Utwórz zakładkę Other
     $otherTab = New-Object System.Windows.Forms.TabPage
     $otherTab.Text = "Other"
     $TabControl.Controls.Add($otherTab)
-    
+
     # Panel główny z scrollowaniem
     $mainPanel = New-Object System.Windows.Forms.Panel
     $mainPanel.Dock = "Fill"
     $mainPanel.AutoScroll = $true
     $otherTab.Controls.Add($mainPanel)
-    
+
     # Przycisk Input Backup
     $backupButton = New-Object System.Windows.Forms.Button
     $backupButton.Text = "Input Backup"
@@ -1507,18 +1608,18 @@ function Create-OtherTab {
     $backupButton.Location = New-Object System.Drawing.Point(20, 20)
     $backupButton.BackColor = [System.Drawing.Color]::LightGreen
     $mainPanel.Controls.Add($backupButton)
-    
+
     $backupButton.Add_Click({
         BackupInputFiles
     })
-    
+
     $descLabel1 = New-Object System.Windows.Forms.Label
     $descLabel1.Text = "Backup your DCS Input configuration files to a safe location."
     $descLabel1.Location = New-Object System.Drawing.Point(20, 70)
     $descLabel1.Size = New-Object System.Drawing.Size(500, 20)
     $descLabel1.ForeColor = [System.Drawing.Color]::Gray
     $mainPanel.Controls.Add($descLabel1)
-    
+
     # Przycisk Clear Shaders
     $shadersButton = New-Object System.Windows.Forms.Button
     $shadersButton.Text = "Clear Shaders"
@@ -1526,56 +1627,76 @@ function Create-OtherTab {
     $shadersButton.Location = New-Object System.Drawing.Point(20, 110)
     $shadersButton.BackColor = [System.Drawing.Color]::LightCoral
     $mainPanel.Controls.Add($shadersButton)
-    
+
     $shadersButton.Add_Click({
         ClearShaders -DCSRoot $DCSRoot
     })
-    
+
     $descLabel2 = New-Object System.Windows.Forms.Label
     $descLabel2.Text = "Clear shader cache (.meta2 and .fxo files) to improve performance."
     $descLabel2.Location = New-Object System.Drawing.Point(20, 160)
     $descLabel2.Size = New-Object System.Drawing.Size(500, 20)
     $descLabel2.ForeColor = [System.Drawing.Color]::Gray
     $mainPanel.Controls.Add($descLabel2)
-    
-    # Przycisk Switch User
+
+    # Przycisk Clear Temp (NOWY)
+    $tempButton = New-Object System.Windows.Forms.Button
+    $tempButton.Text = "Clear Temp"
+    $tempButton.Size = New-Object System.Drawing.Size(150, 40)
+    $tempButton.Location = New-Object System.Drawing.Point(20, 200)
+    $tempButton.BackColor = [System.Drawing.Color]::Orange
+    $mainPanel.Controls.Add($tempButton)
+
+    $tempButton.Add_Click({
+        ClearTemp
+    })
+
+    $descLabel5 = New-Object System.Windows.Forms.Label
+    $descLabel5.Text = "Clear DCS temporary files from AppData\Local\Temp to free up disk space."
+    $descLabel5.Location = New-Object System.Drawing.Point(20, 250)
+    $descLabel5.Size = New-Object System.Drawing.Size(500, 20)
+    $descLabel5.ForeColor = [System.Drawing.Color]::Gray
+    $mainPanel.Controls.Add($descLabel5)
+
+    # Przycisk Switch User (pozycja przesunięta)
     $switchUserButton = New-Object System.Windows.Forms.Button
     $switchUserButton.Text = "Switch User"
     $switchUserButton.Size = New-Object System.Drawing.Size(150, 40)
-    $switchUserButton.Location = New-Object System.Drawing.Point(20, 200)
+    $switchUserButton.Location = New-Object System.Drawing.Point(20, 290)
     $switchUserButton.BackColor = [System.Drawing.Color]::LightBlue
     $mainPanel.Controls.Add($switchUserButton)
-    
+
     $switchUserButton.Add_Click({
         SwitchUser -DCSRoot $DCSRoot
     })
-    
+
     $descLabel3 = New-Object System.Windows.Forms.Label
     $descLabel3.Text = "Create a new DCS profile that shares settings and inputs but uses separate Eagle Dynamics account.`nUseful for multiple accounts or testing different configurations."
-    $descLabel3.Location = New-Object System.Drawing.Point(20, 250)
+    $descLabel3.Location = New-Object System.Drawing.Point(20, 340)
     $descLabel3.Size = New-Object System.Drawing.Size(500, 40)
     $descLabel3.ForeColor = [System.Drawing.Color]::Gray
     $mainPanel.Controls.Add($descLabel3)
-    
-    # Przycisk Unlock Liveries
+
+    # Przycisk Unlock Liveries (pozycja przesunięta)
     $liveriesButton = New-Object System.Windows.Forms.Button
     $liveriesButton.Text = "Unlock Liveries"
     $liveriesButton.Size = New-Object System.Drawing.Size(150, 40)
-    $liveriesButton.Location = New-Object System.Drawing.Point(20, 310)
+    $liveriesButton.Location = New-Object System.Drawing.Point(20, 400)
     $liveriesButton.BackColor = [System.Drawing.Color]::LightYellow
     $mainPanel.Controls.Add($liveriesButton)
-    
+
     $liveriesButton.Add_Click({
         UnlockLiveries -DCSRoot $DCSRoot
     })
-    
+
     $descLabel4 = New-Object System.Windows.Forms.Label
     $descLabel4.Text = "Modify description.lua files to unlock liveries for all countries.`nExports modified files without changing original DCS installation."
-    $descLabel4.Location = New-Object System.Drawing.Point(20, 360)
+    $descLabel4.Location = New-Object System.Drawing.Point(20, 450)
     $descLabel4.Size = New-Object System.Drawing.Size(500, 40)
     $descLabel4.ForeColor = [System.Drawing.Color]::Gray
     $mainPanel.Controls.Add($descLabel4)
 }
+
 
 # --- Main script ---
 do {
