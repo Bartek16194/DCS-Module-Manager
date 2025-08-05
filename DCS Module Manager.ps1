@@ -1499,42 +1499,73 @@ function Show-TempCleanupConfirmation {
 
     $f = New-Object System.Windows.Forms.Form
     $f.Text            = "Confirm Temp Cleanup"
-    $f.Size            = New-Object System.Drawing.Size(700,600)
+    $f.Size            = New-Object System.Drawing.Size(700,650)
     $f.StartPosition   = "CenterScreen"
     $f.FormBorderStyle = 'FixedDialog'
     $f.MaximizeBox     = $false
     $f.MinimizeBox     = $false
 
-    $lst = New-Object System.Windows.Forms.ListBox
-    $lst.Location = New-Object System.Drawing.Point(10,10)
-    $lst.Size     = New-Object System.Drawing.Size(660,450)
-    $lst.Font     = New-Object System.Drawing.Font("Consolas",8)
+    # Label: files to delete
+    $lblFiles = New-Object System.Windows.Forms.Label
+    $lblFiles.Text     = "Files to be deleted during temp cleanup:"
+    $lblFiles.Location = New-Object System.Drawing.Point(10,10)
+    $lblFiles.Size     = New-Object System.Drawing.Size(660,20)
+    $lblFiles.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
+    $f.Controls.Add($lblFiles)
+
+    # ListBox: file list
+    $lstFiles = New-Object System.Windows.Forms.ListBox
+    $lstFiles.Location = New-Object System.Drawing.Point(10,35)
+    $lstFiles.Size     = New-Object System.Drawing.Size(660,350)
+    $lstFiles.Font     = New-Object System.Drawing.Font("Consolas",8)
     foreach ($file in $Files) {
-        [void]$lst.Items.Add("$($file.Name) ($([math]::Round($file.Length/1MB,2)) MB)")
+        [void]$lstFiles.Items.Add("$($file.Name) ($([math]::Round($file.Length/1MB,2)) MB)")
     }
-    [void]$lst.Items.Add("TOTAL: $totalFiles files, $totalSize MB")
-    $f.Controls.Add($lst)
+    [void]$lstFiles.Items.Add("TOTAL: $totalFiles files, $totalSize MB")
+    $f.Controls.Add($lstFiles)
 
-    $panel = New-Object System.Windows.Forms.Panel
-    $panel.Height = 60
-    $panel.Dock   = 'Bottom'
-    $f.Controls.Add($panel)
+    # Label: paths being processed
+    $lblPaths = New-Object System.Windows.Forms.Label
+    $lblPaths.Text     = "Paths being processed:"
+    $lblPaths.Location = New-Object System.Drawing.Point(10,395)
+    $lblPaths.Size     = New-Object System.Drawing.Size(660,20)
+    $lblPaths.Font     = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
+    $f.Controls.Add($lblPaths)
 
+    # TextBox: path display
+    $txtPaths = New-Object System.Windows.Forms.TextBox
+    $txtPaths.Location = New-Object System.Drawing.Point(10,420)
+    $txtPaths.Size     = New-Object System.Drawing.Size(660,80)
+    $txtPaths.Multiline = $true
+    $txtPaths.ReadOnly = $true
+    $txtPaths.Font     = New-Object System.Drawing.Font("Consolas",8)
+    $txtPaths.Text     = "Temp Folder: $TempFolder"
+    $f.Controls.Add($txtPaths)
+
+    # Button panel
+    $btnPanel = New-Object System.Windows.Forms.Panel
+    $btnPanel.Height = 60
+    $btnPanel.Dock   = 'Bottom'
+    $f.Controls.Add($btnPanel)
+
+    # Execute Cleanup button
     $btnOK = New-Object System.Windows.Forms.Button
     $btnOK.Text         = "Execute Cleanup"
     $btnOK.Size         = New-Object System.Drawing.Size(120,30)
     $btnOK.Location     = New-Object System.Drawing.Point(200,15)
     $btnOK.BackColor    = [System.Drawing.Color]::LightCoral
     $btnOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $panel.Controls.Add($btnOK)
+    $btnPanel.Controls.Add($btnOK)
 
+    # Cancel button
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text         = "Cancel"
     $btnCancel.Size         = New-Object System.Drawing.Size(80,30)
     $btnCancel.Location     = New-Object System.Drawing.Point(340,15)
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    $panel.Controls.Add($btnCancel)
+    $btnPanel.Controls.Add($btnCancel)
 
+    # Enter/Esc shortcuts
     $f.AcceptButton = $btnOK
     $f.CancelButton = $btnCancel
 
@@ -1544,48 +1575,53 @@ function Show-TempCleanupConfirmation {
 function ClearTemp {
     Add-Type -AssemblyName System.Windows.Forms
 
+    # Select DCS profile
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
     $dlg.Description         = "Select DCS Saved Games profile"
     $dlg.ShowNewFolderButton = $false
-    $def = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta"
-    if (Test-Path $def) { $dlg.SelectedPath = $def }
+    $defaultProfile = Join-Path $env:USERPROFILE "Saved Games\DCS.openbeta"
+    if (Test-Path $defaultProfile) { $dlg.SelectedPath = $defaultProfile }
     if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
     $profile = Split-Path $dlg.SelectedPath -Leaf
     $temp    = Join-Path $env:LOCALAPPDATA "Temp\$profile"
 
     if (-not (Test-Path $temp)) {
-        [System.Windows.Forms.MessageBox]::Show("Nothing to delete:`n$temp","Info","OK","Information")
+        [System.Windows.Forms.MessageBox]::Show("Nothing to delete:`n$temp","Info",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
         return
     }
 
+    # Gather files
     $files = Get-ChildItem -Path $temp -Recurse -File
-    $res   = Show-TempCleanupConfirmation -TempFolder $temp -Files $files
+
+    # Show confirmation/report
+    $res = Show-TempCleanupConfirmation -TempFolder $temp -Files $files
     Write-Host "[DEBUG] DialogResult = $res"
     if ($res -ne [System.Windows.Forms.DialogResult]::OK) {
         Write-Host "[DEBUG] Cleanup cancelled by user"
         return
     }
 
+    # Kill processes locking files
     Get-Process | Where-Object {
         $_.Modules 2>$null | Where-Object { $_.FileName -like "*Temp\$profile*" }
     } | Stop-Process -Force -ErrorAction SilentlyContinue
 
     Start-Sleep -Milliseconds 200
 
+    # Delete files
     foreach ($f in $files) {
         attrib -s -h -r $f.FullName 2>$null
         Remove-Item -Path $f.FullName -Force -ErrorAction SilentlyContinue
     }
 
+    # Delete directories
     Get-ChildItem -Path $temp -Recurse -Directory |
-      Sort-Object FullName -Descending |
-      Remove-Item -Force -ErrorAction SilentlyContinue
+        Sort-Object FullName -Descending |
+        Remove-Item -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $temp -Force -ErrorAction SilentlyContinue
 
-    [System.Windows.Forms.MessageBox]::Show("Temp cleanup completed.","Success","OK","Information")
+    [System.Windows.Forms.MessageBox]::Show("Temp cleanup completed.","Success",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
 }
-
-
 
 function Create-OtherTab {
     param($TabControl, $DCSRoot)
